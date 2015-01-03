@@ -24,26 +24,27 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 __all__ = [
-  '__version__',
-  'MAJOR_VERSION',
-  'MINOR_VERSION',
-  'RELEASE_VERSION',
-  'VERSION',
-  'SHOTGUN_API',
-  'SHOTGUN_API_LOCK',
-  'SgConnection',
-  'SgEntity',
-  'SgEntityClassFactory',
-  'SgEntitySchemaInfo',
-  'SgField',
-  'SgFieldSchemaInfo',
-  'SgQueryEngine',
-  'SgSchema',
-  'SgScriptField',
-  'SgUserField',
-  'parseFromLogicalOp',
-  'parseToLogicalOp',
-  'config'
+    '__version__',
+    'MAJOR_VERSION',
+    'MINOR_VERSION',
+    'RELEASE_VERSION',
+    'VERSION',
+    'SHOTGUN_API',
+    'SHOTGUN_API_LOCK',
+    'SgConnection',
+    'SgEntity',
+    'SgEntityClassFactory',
+    'SgEntitySchemaInfo',
+    'SgField',
+    'SgFieldSchemaInfo',
+    'SgQueryEngine',
+    'SgLazyResultSet',
+    'SgSchema',
+    'SgScriptField',
+    'SgUserField',
+    'parseFromLogicalOp',
+    'parseToLogicalOp',
+    'config'
 ]
 
 MAJOR_VERSION = 1
@@ -51,9 +52,9 @@ MINOR_VERSION = 0
 RELEASE_VERSION = 1
 
 VERSION = '%(major)d.%(minor)dv%(release)d' % {
-  'major': MAJOR_VERSION,
-  'minor': MINOR_VERSION,
-  'release': RELEASE_VERSION
+    'major': MAJOR_VERSION,
+    'minor': MINOR_VERSION,
+    'release': RELEASE_VERSION
 }
 
 __version__ = VERSION
@@ -165,9 +166,18 @@ from callbacks import *
 import config
 
 try:
-  SHOTGUN_API = __import__(config.SHOTGUNAPI_NAME)
+    SHOTGUN_API = __import__(config.SHOTGUNAPI_NAME)
 except Exception, e:
-  if e.message == 'No module named %s' % config.SHOTGUNAPI_NAME:
-    raise ImportError('ShotgunORM unable to find Shotgun Python API module "%s", check "./ShotgunORM/__init__.SHOTGUNAPI_NAME" or sys.path' % config.SHOTGUNAPI_NAME)
-  else:
-    raise e
+    if e.message == 'No module named %s' % config.SHOTGUNAPI_NAME:
+        raise ImportError('ShotgunORM unable to find Shotgun Python API module "%s", check "./ShotgunORM/__init__.SHOTGUNAPI_NAME" or sys.path' % config.SHOTGUNAPI_NAME)
+    else:
+        raise e
+
+
+################################################################################
+#
+# Import SgLazyResultSet
+#
+################################################################################
+
+from SgLazyResultSet import *

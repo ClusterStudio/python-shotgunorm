@@ -25,7 +25,7 @@
 #
 
 __all__ = [
-  'SgConnection'
+    'SgConnection'
 ]
 
 # Python imports
@@ -39,1225 +39,1245 @@ import webbrowser
 # This module imports
 import ShotgunORM
 
+
 class SgConnectionMeta(type):
-  '''
-  Singleton metaclass for SgSchema objects.
-  '''
 
-  __lock__ = threading.Lock()
-  __connections__ = {}
-
-  def __new__(cls, name, bases, dct):
-    update = dict(dct)
-
-    update['__connections__'] = {}
-
-    return super(SgConnectionMeta, cls).__new__(cls, name, bases, update)
-
-  def __call__(cls, *args, **kwargs):
-    with SgConnectionMeta.__lock__:
-      result = super(SgConnectionMeta, cls).__call__(*args, **kwargs)
-
-      urlLower = result.url().lower()
-
-      classConnections = cls.__connections__
-
-      login = result.login()
-      key = result.key()
-
-      try:
-        ref = classConnections[urlLower][login][key]
-
-        refResult = ref()
-
-        if refResult != None:
-          return refResult
-      except KeyError:
-        pass
-
-      resultWeak = weakref.ref(result)
-
-      if not classConnections.has_key(urlLower):
-        classConnections[urlLower] = {
-          login: {
-            key: resultWeak
-          }
-        }
-      elif not classConnections[urlLower].has_key(login):
-        classConnections[urlLower][login] = {
-          key: resultWeak
-        }
-      else:
-        classConnections[urlLower][login][key] = resultWeak
-
-      allConnections = SgConnectionMeta.__connections__
-
-      if not allConnections.has_key(urlLower):
-        allConnections[urlLower] = weakref.WeakValueDictionary()
-
-      allConnections[urlLower][id(result)] = result
-
-      # Initialize!
-      schema = result.schema()
-
-      if not schema.isInitialized():
-        schema.initialize(result)
-      else:
-        factory = result.classFactory()
-
-        factory.initialize()
-
-      result.queryEngine().start()
-
-      return result
-
-  @classmethod
-  def connections(cls, url):
     '''
-    Returns all the active SgConnection objects for a given URL string.
+    Singleton metaclass for SgSchema objects.
     '''
 
-    url = url.lower()
+    __lock__ = threading.Lock()
+    __connections__ = {}
 
-    if not SgConnectionMeta.__connections__.has_key(url):
-      return []
+    def __new__(cls, name, bases, dct):
+        update = dict(dct)
 
-    return SgConnectionMeta.__connections__[url].values()
+        update['__connections__'] = {}
+
+        return super(SgConnectionMeta, cls).__new__(cls, name, bases, update)
+
+    def __call__(cls, *args, **kwargs):
+        with SgConnectionMeta.__lock__:
+            result = super(SgConnectionMeta, cls).__call__(*args, **kwargs)
+
+            urlLower = result.url().lower()
+
+            classConnections = cls.__connections__
+
+            login = result.login()
+            key = result.key()
+
+            try:
+                ref = classConnections[urlLower][login][key]
+
+                refResult = ref()
+
+                if refResult != None:
+                    return refResult
+            except KeyError:
+                pass
+
+            resultWeak = weakref.ref(result)
+
+            if not classConnections.has_key(urlLower):
+                classConnections[urlLower] = {
+                    login: {
+                        key: resultWeak
+                    }
+                }
+            elif not classConnections[urlLower].has_key(login):
+                classConnections[urlLower][login] = {
+                    key: resultWeak
+                }
+            else:
+                classConnections[urlLower][login][key] = resultWeak
+
+            allConnections = SgConnectionMeta.__connections__
+
+            if not allConnections.has_key(urlLower):
+                allConnections[urlLower] = weakref.WeakValueDictionary()
+
+            allConnections[urlLower][id(result)] = result
+
+            # Initialize!
+            schema = result.schema()
+
+            if not schema.isInitialized():
+                schema.initialize(result)
+            else:
+                factory = result.classFactory()
+
+                factory.initialize()
+
+            result.queryEngine().start()
+
+            return result
+
+    @classmethod
+    def connections(cls, url):
+        '''
+        Returns all the active SgConnection objects for a given URL string.
+        '''
+
+        url = url.lower()
+
+        if not SgConnectionMeta.__connections__.has_key(url):
+            return []
+
+        return SgConnectionMeta.__connections__[url].values()
+
 
 class SgConnectionPriv(object):
-  '''
-  Private base class for Shotgun connections.
 
-  This class is a wrapper to the Shotgun Python API.
-  '''
-
-  __metaclass__ = SgConnectionMeta
-
-  def __init__(self, url, login, key):
-    self._url = str(url)
-    self._login = str(login)
-    self._key = str(key)
-
-    self._connection = ShotgunORM.SHOTGUN_API.shotgun.Shotgun(
-      self._url,
-      self._login,
-      self._key,
-      connect=False
-    )
-
-  def _sg_batch(self, requests):
     '''
-    Calls the Shotgun Python API batch function.
+    Private base class for Shotgun connections.
 
-    This will lock the global Shotgun Python API lock.
+    This class is a wrapper to the Shotgun Python API.
     '''
 
-    with ShotgunORM.SHOTGUN_API_LOCK:
-      return self.connection().batch(requests)
+    __metaclass__ = SgConnectionMeta
 
-  def _sg_delete(self, entityType, entityId):
-    '''
-    Calls the Shotgun Python API delete function.
+    def __init__(self, url, login, key):
+        self._url = str(url)
+        self._login = str(login)
+        self._key = str(key)
 
-    This will lock the global Shotgun Python API lock.
-    '''
+        self._connection = ShotgunORM.SHOTGUN_API.shotgun.Shotgun(
+            self._url,
+            self._login,
+            self._key,
+            connect=False
+        )
 
-    with ShotgunORM.SHOTGUN_API_LOCK:
-      return self.connection().delete(entityType, entityId)
+    def _sg_batch(self, requests):
+        '''
+        Calls the Shotgun Python API batch function.
 
-  def _sg_find(
-    self,
-    entity_type,
-    filters,
-    fields=None,
-    order=None,
-    filter_operator=None,
-    limit=0,
-    retired_only=False,
-    page=0
-  ):
-    '''
-    Calls the Shotgun Python API find function.
+        This will lock the global Shotgun Python API lock.
+        '''
 
-    This will lock the global Shotgun Python API lock.
-    '''
+        with ShotgunORM.SHOTGUN_API_LOCK:
+            return self.connection().batch(requests)
 
-    with ShotgunORM.SHOTGUN_API_LOCK:
-      if fields != None:
-        fields = list(fields)
+    def _sg_delete(self, entityType, entityId):
+        '''
+        Calls the Shotgun Python API delete function.
 
-      return self.connection().find(
+        This will lock the global Shotgun Python API lock.
+        '''
+
+        with ShotgunORM.SHOTGUN_API_LOCK:
+            return self.connection().delete(entityType, entityId)
+
+    def _sg_find(
+        self,
         entity_type,
         filters,
-        fields,
-        order,
-        filter_operator,
-        limit,
-        retired_only,
-        page
-      )
+        fields=None,
+        order=None,
+        filter_operator=None,
+        limit=0,
+        retired_only=False,
+        page=0
+    ):
+        '''
+        Calls the Shotgun Python API find function.
 
-  def _sg_find_one(
-    self,
-    entity_type,
-    filters=[],
-    fields=None,
-    order=None,
-    filter_operator=None,
-    retired_only=False,
-  ):
-    '''
-    Calls the Shotgun Python API find_one function.
+        This will lock the global Shotgun Python API lock.
+        '''
 
-    This will lock the global Shotgun Python API lock.
-    '''
+        with ShotgunORM.SHOTGUN_API_LOCK:
+            if fields != None:
+                fields = list(fields)
 
-    with ShotgunORM.SHOTGUN_API_LOCK:
-      if fields != None:
-        fields = list(fields)
+            return self.connection().find(
+                entity_type,
+                filters,
+                fields,
+                order,
+                filter_operator,
+                limit,
+                retired_only,
+                page
+            )
 
-      return self.connection().find_one(
+    def _sg_find_one(
+        self,
         entity_type,
-        filters,
-        fields,
-        order,
-        filter_operator,
-        retired_only,
-      )
+        filters=[],
+        fields=None,
+        order=None,
+        filter_operator=None,
+        retired_only=False,
+    ):
+        '''
+        Calls the Shotgun Python API find_one function.
 
-  def _sg_revive(self, entityType, entityId):
-    '''
-    Calls the Shotgun Python API revive function.
+        This will lock the global Shotgun Python API lock.
+        '''
 
-    This will lock the global Shotgun Python API lock.
-    '''
+        with ShotgunORM.SHOTGUN_API_LOCK:
+            if fields != None:
+                fields = list(fields)
 
-    with ShotgunORM.SHOTGUN_API_LOCK:
-      return self.connection().revive(entityType, entityId)
+            return self.connection().find_one(
+                entity_type,
+                filters,
+                fields,
+                order,
+                filter_operator,
+                retired_only,
+            )
 
-  def connect(self):
-    '''
-    Connects to the Shotgun db.
-    '''
+    def _sg_revive(self, entityType, entityId):
+        '''
+        Calls the Shotgun Python API revive function.
 
-    with ShotgunORM.SHOTGUN_API_LOCK:
-      self.connection().connect()
+        This will lock the global Shotgun Python API lock.
+        '''
 
-  def connection(self):
-    '''
-    Returns the Shotgun connection object.
-    '''
+        with ShotgunORM.SHOTGUN_API_LOCK:
+            return self.connection().revive(entityType, entityId)
 
-    return self._connection
+    def connect(self):
+        '''
+        Connects to the Shotgun db.
+        '''
 
-  def disconnect(self):
-    '''
-    Closes the connection to Shotgun.
-    '''
+        with ShotgunORM.SHOTGUN_API_LOCK:
+            self.connection().connect()
 
-    with ShotgunORM.SHOTGUN_API_LOCK:
-      self.connection().close()
+    def connection(self):
+        '''
+        Returns the Shotgun connection object.
+        '''
 
-  def isConnected(self):
-    '''
-    Returns True if the connection is connected to the Shotgun db.
-    '''
+        return self._connection
 
-    return self.connection()._connection != None
+    def disconnect(self):
+        '''
+        Closes the connection to Shotgun.
+        '''
 
-  def key(self):
-    '''
-    Returns the Shotgun key for the connection.
-    '''
+        with ShotgunORM.SHOTGUN_API_LOCK:
+            self.connection().close()
 
-    return self._key
+    def isConnected(self):
+        '''
+        Returns True if the connection is connected to the Shotgun db.
+        '''
 
-  def login(self):
-    '''
-    Returns the Shotgun login for the connection.
-    '''
+        return self.connection()._connection != None
 
-    return self._login
+    def key(self):
+        '''
+        Returns the Shotgun key for the connection.
+        '''
 
-  def url(self, openInBrowser=False):
-    '''
-    Returns the Shotgun url for the connection.
+        return self._key
 
-    Args:
-      * (bool) openInBrowser:
-        When True opens the URl in the operating systems default web-browser.
-    '''
+    def login(self):
+        '''
+        Returns the Shotgun login for the connection.
+        '''
 
-    if openInBrowser:
-      webbrowser.open(self._url)
+        return self._login
 
-    return self._url
+    def url(self, openInBrowser=False):
+        '''
+        Returns the Shotgun url for the connection.
+
+        Args:
+          * (bool) openInBrowser:
+            When True opens the URl in the operating systems default web-browser.
+        '''
+
+        if openInBrowser:
+            webbrowser.open(self._url)
+
+        return self._url
+
 
 class SgConnection(SgConnectionPriv):
-  '''
-  Class that represents a connection to Shotgun.
 
-  This class is a singleton for a given url/login/key so multiple calls of
-  the same info return the same SgConnection.
-  '''
-
-  def __repr__(self):
-    return '<%s(url:"%s", login:"%s")>' % (self.__class__.__name__, self.url(), self.login())
-
-  #def __eq__(self, item):
-  #  if not isinstance(item, SgConnection):
-  #    return False
-  #
-  #  return (self.key() == item.key() and self.url() == item.url())
-  #
-  #def __ne__(self, item):
-  #  return not (self == item)
-
-  def __enter__(self):
-    self.__lockCache.acquire()
-
-  def __exit__(self, exc_type, exc_value, traceback):
-    self.__lockCache.release()
-
-  def __init__(self, url, login, key):
-    super(SgConnection, self).__init__(url, login, key)
-
-    self.__lockCache = threading.RLock()
-
-    self._fieldQueryDefaults = 'default'
-    self._fieldQueryDefaultsFallback = 'default'
-
-    self.__qEngine = ShotgunORM.SgQueryEngine(self)
-    self.__schema = ShotgunORM.SgSchema.createSchema(self._url)
-    self._factory = ShotgunORM.SgEntityClassFactory(self)
-
-    self.__entityCache = {}
-    self.__entityCaching = ShotgunORM.config.DEFAULT_CONNECTION_CACHING
-
-  def _addEntity(self, sgEntity):
     '''
-    Internal function!
+    Class that represents a connection to Shotgun.
 
-    Used by SgEntities and SgConnections when they commit a new Entity to Shotgun.
+    This class is a singleton for a given url/login/key so multiple calls of
+    the same info return the same SgConnection.
     '''
 
-    with self:
-      self.__entityCache[sgEntity.type][sgEntity['id']] = {
-        'entity': weakref.ref(sgEntity),
-        'cache': {}
-      }
+    def __repr__(self):
+        return '<%s(url:"%s", login:"%s")>' % (self.__class__.__name__, self.url(), self.login())
 
-  def _cacheEntity(self, sgEntity):
-    '''
-    Internal function!
+    # def __eq__(self, item):
+    #  if not isinstance(item, SgConnection):
+    #    return False
+    #
+    #  return (self.key() == item.key() and self.url() == item.url())
+    #
+    # def __ne__(self, item):
+    #  return not (self == item)
 
-    Caches the passed Entities field values.
+    def __enter__(self):
+        self.__lockCache.acquire()
 
-    Only fields that contain no commit update and are either valid or have
-    pending sync updates are cached.
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.__lockCache.release()
 
-    Returns immediately if isCaching() is False.
-    '''
+    def __init__(self, url, login, key):
+        super(SgConnection, self).__init__(url, login, key)
 
-    with self:
-      if not self.isCaching():
-        return
+        self.__lockCache = threading.RLock()
 
-      # Bail if the cache has been cleared.  The Entity is dirty!
-      if not self.__entityCache.has_key(sgEntity.type) or not self.__entityCache[sgEntity.type].has_key(sgEntity['id']):
-        return
+        self._fieldQueryDefaults = 'default'
+        self._fieldQueryDefaultsFallback = 'default'
 
-      cache = self.__entityCache[sgEntity.type][sgEntity['id']]
+        self.__qEngine = ShotgunORM.SgQueryEngine(self)
+        self.__schema = ShotgunORM.SgSchema.createSchema(self._url)
+        self._factory = ShotgunORM.SgEntityClassFactory(self)
 
-      e = cache['entity']()
+        self.__entityCache = {}
+        self.__entityCaching = ShotgunORM.config.DEFAULT_CONNECTION_CACHING
 
-      # If the cache was cleared and a new Entity object created this one is
-      # dirty and don't allow it to store cache data.
-      if e != None:
-        if id(e) != id(sgEntity):
-          return
+    def _addEntity(self, sgEntity):
+        '''
+        Internal function!
 
-      data = {}
+        Used by SgEntities and SgConnections when they commit a new Entity to Shotgun.
+        '''
 
-      with sgEntity:
-        if not sgEntity.exists():
-          return
+        with self:
+            self.__entityCache[sgEntity.type][sgEntity['id']] = {
+                'entity': weakref.ref(sgEntity),
+                'cache': {}
+            }
 
-        for name, field in sgEntity.fields().items():
-          if not field.isCacheable():
-            continue
+    def _cacheEntity(self, sgEntity):
+        '''
+        Internal function!
 
-          if field.hasSyncUpdate():
-            data[name] = copy.deepcopy(field._updateValue)
-          else:
-            data[name] = field.toFieldData()
+        Caches the passed Entities field values.
 
-        #data['id'] = sgEntity['id']
-        #data['type'] = sgEntity['type']
+        Only fields that contain no commit update and are either valid or have
+        pending sync updates are cached.
 
-      cache['cache'] = data
-      cache['entity'] = None
+        Returns immediately if isCaching() is False.
+        '''
 
-  def _createEntity(self, sgEntityType, sgData, sgSyncFields=None):
-    '''
-    Internal function!
+        with self:
+            if not self.isCaching():
+                return
 
-    Locks the connection and if the Entity has an ID the cache is checked to see
-    if it already has an SgEntity and if so it returns it otherwise it creates one.
-    '''
+            # Bail if the cache has been cleared.  The Entity is dirty!
+            if not self.__entityCache.has_key(sgEntity.type) or not self.__entityCache[sgEntity.type].has_key(sgEntity['id']):
+                return
 
-    ShotgunORM.LoggerConnection.debug('%(connection)s._createEntity(...)', {'connection': self})
-    ShotgunORM.LoggerConnection.debug('    * sgEntityType: %(entityName)s', {'entityName': sgEntityType})
-    ShotgunORM.LoggerConnection.debug('    * sgData: %(sgData)s', {'sgData': sgData})
+            cache = self.__entityCache[sgEntity.type][sgEntity['id']]
 
-    with self:
-      sgData = dict(sgData)
+            e = cache['entity']()
 
-      factory = self.classFactory()
+            # If the cache was cleared and a new Entity object created this one is
+            # dirty and don't allow it to store cache data.
+            if e != None:
+                if id(e) != id(sgEntity):
+                    return
 
-      result = None
+            data = {}
 
-      eId = None
+            with sgEntity:
+                if not sgEntity.exists():
+                    return
 
-      if sgData.has_key('id'):
-        eId = int(sgData['id'])
-      else:
-        eId = -1
+                for name, field in sgEntity.fields().items():
+                    if not field.isCacheable():
+                        continue
 
-      if not self.__entityCache.has_key(sgEntityType):
-        self.__entityCache[sgEntityType] = {}
+                    if field.hasSyncUpdate():
+                        data[name] = copy.deepcopy(field._updateValue)
+                    else:
+                        data[name] = field.toFieldData()
 
-      # Return immediately if the Entity does not exist.
-      if eId <= -1:
-        result = factory.createEntity(self, sgEntityType, sgData)
+                #data['id'] = sgEntity['id']
+                #data['type'] = sgEntity['type']
 
-        ShotgunORM.onEntityCreate(result)
+            cache['cache'] = data
+            cache['entity'] = None
+
+    def _createEntity(self, sgEntityType, sgData, sgSyncFields=None):
+        '''
+        Internal function!
+
+        Locks the connection and if the Entity has an ID the cache is checked to see
+        if it already has an SgEntity and if so it returns it otherwise it creates one.
+        '''
+
+        ShotgunORM.LoggerConnection.debug('%(connection)s._createEntity(...)', {'connection': self})
+        ShotgunORM.LoggerConnection.debug('    * sgEntityType: %(entityName)s', {'entityName': sgEntityType})
+        ShotgunORM.LoggerConnection.debug('    * sgData: %(sgData)s', {'sgData': sgData})
+
+        with self:
+            sgData = dict(sgData)
+
+            factory = self.classFactory()
+
+            result = None
+
+            eId = None
+
+            if sgData.has_key('id'):
+                eId = int(sgData['id'])
+            else:
+                eId = -1
+
+            if not self.__entityCache.has_key(sgEntityType):
+                self.__entityCache[sgEntityType] = {}
+
+            # Return immediately if the Entity does not exist.
+            if eId <= -1:
+                result = factory.createEntity(self, sgEntityType, sgData)
+
+                ShotgunORM.onEntityCreate(result)
+
+                return result
+
+            onCreate = False
+
+            # Check the cache and if its found update any non-valid fields that
+            # have data contained in the passed sgData.  If not found create the
+            # Entity and add it to the cache.]
+            if self.__entityCache[sgEntityType].has_key(eId):
+                result = self.__entityCache[sgEntityType][eId]['entity']
+
+                if result != None:
+                    result = result()
+
+                if result == None:
+                    cacheData = self.__entityCache[sgEntityType][eId]['cache']
+
+                    tmpData = {
+                        'id': eId,
+                        'type': sgEntityType
+                    }
+
+                    tmpData.update(cacheData)
+
+                    result = factory.createEntity(self, sgEntityType, tmpData)
+
+                    self.__entityCache[sgEntityType][eId]['entity'] = weakref.ref(result)
+
+                    onCreate = True
+
+                with result:
+                    del sgData['id']
+                    del sgData['type']
+
+                    for field, value in sgData.items():
+                        fieldObj = result.field(field)
+
+                        if fieldObj.isValid() or fieldObj.hasCommit() or fieldObj.hasSyncUpdate():
+                            continue
+
+                        fieldObj.invalidate()
+
+                        fieldObj._updateValue = value
+
+                        fieldObj.setHasSyncUpdate(True)
+            else:
+                result = factory.createEntity(self, sgEntityType, sgData)
+
+                self.__entityCache[sgEntityType][eId] = {
+                    'entity': weakref.ref(result),
+                    'cache': {}
+                }
+
+                onCreate = True
+
+            if sgSyncFields != None:
+                result.sync(sgSyncFields, ignoreValid=True, ignoreWithUpdate=True, backgroundPull=True)
+
+            if onCreate:
+                ShotgunORM.onEntityCreate(result)
+
+            return result
+
+    def _flattenFilters(self, sgFilters):
+        '''
+        Internal function used to flatten Shotgun filter lists.  This will convert
+        SgEntity objects into their equivalent Shotgun search pattern.
+
+        Example:
+        myProj = myConnection.findOne('Project', [['id', 'is', 65]])
+        randomAsset = myConnection.findOne('Asset', [['project', 'is', myProj]])
+
+        sgFilters becomes [['project', 'is', {'type': 'Project', 'id': 65}]]
+        '''
+
+        def flattenDict(obj):
+            result = {}
+
+            for key, value in obj.items():
+                if isinstance(value, ShotgunORM.SgEntity):
+                    result[key] = value.toEntityFieldData()
+                elif isinstance(value, ShotgunORM.SgField):
+                    result[key] = value.toFieldData()
+                elif isinstance(value, (list, set, tuple)):
+                    result[key] = flattenList(value)
+                elif isinstance(value, dict):
+                    result[key] = flattenDict(value)
+                else:
+                    result[key] = value
+
+            return result
+
+        def flattenList(obj):
+            result = []
+
+            for i in obj:
+                if isinstance(i, ShotgunORM.SgEntity):
+                    result.append(i.toEntityFieldData())
+                elif isinstance(i, ShotgunORM.SgField):
+                    result.append(i.toFieldData())
+                elif isinstance(i, (list, set, tuple)):
+                    result.append(flattenList(i))
+                elif isinstance(i, dict):
+                    result.append(flattenDict(i))
+                else:
+                    result.append(i)
+
+            return result
+
+        if sgFilters == None or sgFilters == []:
+            return []
+
+        if isinstance(sgFilters, int):
+            return [['id', 'is', sgFilters]]
+        elif isinstance(sgFilters, (list, set, tuple)):
+            return flattenList(sgFilters)
+        elif isinstance(sgFilters, dict):
+            return flattenDict(sgFilters)
+        else:
+            return sgFilters
+
+    def _batch(self, requests):
+        def undoEntities(batchConfigs, exception):
+            if len(batchConfigs) <= 0:
+                return
+
+            for data in batchConfigs:
+                entity = data['entity']
+                batchData = data['batch_data']
+                commitData = data['commit_data']
+
+                try:
+                    entity.afterCommit(batchData, None, commitData, exception)
+                except:
+                    pass
+
+        if len(requests) <= 0:
+            return []
+
+        batchConfigs = []
+        batchData = []
+        batchSize = []
+
+        for i in requests:
+            entity = i['entity']
+
+            entityBatchData = i['batch_data']
+
+            commitData = {}
+
+            try:
+                entity.beforeCommit(entityBatchData, commitData)
+            except Exception, e:
+                try:
+                    entity.afterCommit(entityBatchData, None, commitData, e)
+                except:
+                    pass
+
+                undoEntities(batchConfigs, e)
+
+                raise e
+
+            batchConfigs.append(
+                {
+                    'entity': entity,
+                    'batch_data': entityBatchData,
+                    'commit_data': commitData
+                }
+            )
+
+            batchData.extend(entityBatchData)
+            batchSize.append(len(entityBatchData))
+
+        try:
+            sgResult = self._sg_batch(batchData)
+
+            result = copy.deepcopy(sgResult)
+        except Exception, e:
+            undoEntities(batchConfigs, e)
+
+            raise e
+
+        exception = None
+
+        for configData in batchConfigs:
+            entity = configData['entity']
+            entityBatchData = configData['batch_data']
+            entityCommitData = configData['commit_data']
+
+            resultSize = batchSize.pop(0)
+
+            entityResult = []
+
+            for n in xrange(0, resultSize):
+                entityResult.append(sgResult.pop(0))
+
+            try:
+                entity.afterCommit(entityBatchData, entityResult, entityCommitData, None)
+            except Exception, e:
+                if exception == None:
+                    exception = e
+
+        if exception != None:
+            raise exception
 
         return result
 
-      onCreate = False
+    def batch(self, requests):
+        '''
+        Make a batch request of several create, update, and/or delete calls at one
+        time. This is for performance when making large numbers of requests, as it
+        cuts down on the overhead of roundtrips to the server and back. All requests
+        are performed within a transaction, and if any request fails, all of them
+        will be rolled back.
+        '''
 
-      # Check the cache and if its found update any non-valid fields that
-      # have data contained in the passed sgData.  If not found create the
-      # Entity and add it to the cache.]
-      if self.__entityCache[sgEntityType].has_key(eId):
-        result = self.__entityCache[sgEntityType][eId]['entity']
+        if isinstance(requests, ShotgunORM.SgEntity):
+            requests = set([requests])
 
-        if result != None:
-          result = result()
+        if len(requests) <= 0:
+            return []
 
-        if result == None:
-          cacheData = self.__entityCache[sgEntityType][eId]['cache']
+        requests = set(requests)
 
-          tmpData = {
-            'id': eId,
-            'type': sgEntityType
-          }
+        # Lock the Entities down.
+        for entity in requests:
+            entity._lock()
 
-          tmpData.update(cacheData)
-
-          result = factory.createEntity(self, sgEntityType, tmpData)
-
-          self.__entityCache[sgEntityType][eId]['entity'] = weakref.ref(result)
-
-          onCreate = True
-
-        with result:
-          del sgData['id']
-          del sgData['type']
-
-          for field, value in sgData.items():
-            fieldObj = result.field(field)
-
-            if fieldObj.isValid() or fieldObj.hasCommit() or fieldObj.hasSyncUpdate():
-              continue
-
-            fieldObj.invalidate()
-
-            fieldObj._updateValue = value
-
-            fieldObj.setHasSyncUpdate(True)
-      else:
-        result = factory.createEntity(self, sgEntityType, sgData)
-
-        self.__entityCache[sgEntityType][eId] = {
-          'entity': weakref.ref(result),
-          'cache': {}
-        }
-
-        onCreate = True
-
-      if sgSyncFields != None:
-        result.sync(sgSyncFields, ignoreValid=True, ignoreWithUpdate=True, backgroundPull=True)
-
-      if onCreate:
-        ShotgunORM.onEntityCreate(result)
-
-      return result
-
-  def _flattenFilters(self, sgFilters):
-    '''
-    Internal function used to flatten Shotgun filter lists.  This will convert
-    SgEntity objects into their equivalent Shotgun search pattern.
-
-    Example:
-    myProj = myConnection.findOne('Project', [['id', 'is', 65]])
-    randomAsset = myConnection.findOne('Asset', [['project', 'is', myProj]])
-
-    sgFilters becomes [['project', 'is', {'type': 'Project', 'id': 65}]]
-    '''
-
-    def flattenDict(obj):
-      result = {}
-
-      for key, value in obj.items():
-        if isinstance(value, ShotgunORM.SgEntity):
-          result[key] = value.toEntityFieldData()
-        elif isinstance(value, ShotgunORM.SgField):
-          result[key] = value.toFieldData()
-        elif isinstance(value, (list, set, tuple)):
-          result[key] = flattenList(value)
-        elif isinstance(value, dict):
-          result[key] = flattenDict(value)
-        else:
-          result[key] = value
-
-      return result
-
-    def flattenList(obj):
-      result = []
-
-      for i in obj:
-        if isinstance(i, ShotgunORM.SgEntity):
-          result.append(i.toEntityFieldData())
-        elif isinstance(i, ShotgunORM.SgField):
-          result.append(i.toFieldData())
-        elif isinstance(i, (list, set, tuple)):
-          result.append(flattenList(i))
-        elif isinstance(i, dict):
-          result.append(flattenDict(i))
-        else:
-          result.append(i)
-
-      return result
-
-    if sgFilters == None or sgFilters == []:
-      return []
-
-    if isinstance(sgFilters, int):
-      return [['id', 'is', sgFilters]]
-    elif isinstance(sgFilters, (list, set, tuple)):
-      return flattenList(sgFilters)
-    elif isinstance(sgFilters, dict):
-      return flattenDict(sgFilters)
-    else:
-      return sgFilters
-
-  def _batch(self, requests):
-    def undoEntities(batchConfigs, exception):
-      if len(batchConfigs) <= 0:
-        return
-
-      for data in batchConfigs:
-        entity = data['entity']
-        batchData = data['batch_data']
-        commitData = data['commit_data']
+        batchRequests = []
 
         try:
-          entity.afterCommit(batchData, None, commitData, exception)
-        except:
-          pass
+            for entity in requests:
+                if entity.connection() != self:
+                    raise ValueError('entity %s does not belong to this connection %s' % (entity, self))
 
-    if len(requests) <= 0:
-      return []
+                commitData = entity.toBatchData()
 
-    batchConfigs = []
-    batchData = []
-    batchSize = []
+                if len(commitData) <= 0:
+                    continue
 
-    for i in requests:
-      entity = i['entity']
+                batchRequests.append(
+                    {
+                        'entity': entity,
+                        'batch_data': commitData
+                    }
+                )
 
-      entityBatchData = i['batch_data']
+            result = self._batch(batchRequests)
 
-      commitData = {}
+            return result
+        finally:
+            for entity in requests:
+                entity._unlock()
 
-      try:
-        entity.beforeCommit(entityBatchData, commitData)
-      except Exception, e:
-        try:
-          entity.afterCommit(entityBatchData, None, commitData, e)
-        except:
-          pass
+    def classFactory(self):
+        '''
+        Returns the SgEntityClassFactory used by this connection to create Entity
+        objects.
+        '''
 
-        undoEntities(batchConfigs, e)
+        return self._factory
 
-        raise e
+    def clearCache(self, sgEntityTypes=None, fieldValuesOnly=True):
+        '''
+        Clears all cached Entities.
 
-      batchConfigs.append(
-        {
-          'entity': entity,
-          'batch_data': entityBatchData,
-          'commit_data': commitData
-        }
-      )
+        Args:
+          * (list) sgEntityTypes:
+            List of Entity types to clear.
 
-      batchData.extend(entityBatchData)
-      batchSize.append(len(entityBatchData))
+          * (bool) fieldValuesOnly:
+            Only clear field values for Entities that are not currently in scope.
+            This will leave any weakref links to alive Entity objects alone.  Any
+            such Entity will have the ability to cache field values when gc'd.
+        '''
 
-    try:
-      sgResult = self._sg_batch(batchData)
+        with self:
+            if fieldValuesOnly:
+                if sgEntityTypes == None:
+                    for entityType, entityCaches in self.__entityCache.items():
+                        for entityId, entityCache in entityCaches.items():
+                            entityCache['cache'].clear()
+                else:
+                    if isinstance(sgEntityTypes, str):
+                        sgEntityTypes = [sgEntityTypes]
 
-      result = copy.deepcopy(sgResult)
-    except Exception, e:
-      undoEntities(batchConfigs, e)
+                    for i in sgEntityTypes:
+                        if not self.__entityCache.has_key(i):
+                            continue
 
-      raise e
+                        for entityId, entityCache in self.__entityCache[i].items():
+                            entityCache['cache'].clear()
+            else:
+                if sgEntityTypes == None:
+                    self.__entityCache = {}
+                else:
+                    if isinstance(sgEntityTypes, str):
+                        sgEntityTypes = [sgEntityTypes]
 
-    exception = None
+                    for i in sgEntityTypes:
+                        if self.__entityCache.has_key(i):
+                            del self.__entityCache[i]
 
-    for configData in batchConfigs:
-      entity = configData['entity']
-      entityBatchData = configData['batch_data']
-      entityCommitData = configData['commit_data']
+    def create(self, sgEntityType, sgData={}, sgCommit=False, numberOfEntities=1):
+        '''
+        Creates a new Entity and returns it.  The returned Entity does not exist in
+        the Shotgun database.
 
-      resultSize = batchSize.pop(0)
+        Args:
+          * (str) sgEntityType:
+            Type of Entity to create.
 
-      entityResult = []
+          * (dict) sgData:
+            Shotgun formated dictionary of field data.
 
-      for n in xrange(0, resultSize):
-        entityResult.append(sgResult.pop(0))
+          * (bool) sgCommit:
+            Commits the result immediately to Shotgun.
 
-      try:
-        entity.afterCommit(entityBatchData, entityResult, entityCommitData, None)
-      except Exception, e:
-        if exception == None:
-          exception = e
+          * (int) numberOfEntities:
+            Number of Entities to create.
+        '''
 
-    if exception != None:
-      raise exception
+        ShotgunORM.LoggerConnection.debug('%(connection)s.create(...)', {'connection': self})
+        ShotgunORM.LoggerConnection.debug('    * sgEntityType: %(entityName)s', {'entityName': sgEntityType})
+        ShotgunORM.LoggerConnection.debug('    * sgData: %(sgData)s', {'sgData': sgData})
+        ShotgunORM.LoggerConnection.debug('    * sgCommit: %(sgCommit)s', {'sgCommit': sgCommit})
 
-    return result
+        factory = self.classFactory()
 
-  def batch(self, requests):
-    '''
-    Make a batch request of several create, update, and/or delete calls at one
-    time. This is for performance when making large numbers of requests, as it
-    cuts down on the overhead of roundtrips to the server and back. All requests
-    are performed within a transaction, and if any request fails, all of them
-    will be rolled back.
-    '''
+        numberOfEntities = max(1, numberOfEntities)
 
-    if isinstance(requests, ShotgunORM.SgEntity):
-      requests = set([requests])
+        sgData = self._flattenFilters(sgData)
 
-    if len(requests) <= 0:
-      return []
+        if numberOfEntities == 1:
+            newEntity = self._createEntity(sgEntityType, sgData)
 
-    requests = set(requests)
+            if sgCommit:
+                newEntity.commit()
 
-    # Lock the Entities down.
-    for entity in requests:
-      entity._lock()
+            return newEntity
+        else:
+            result = []
 
-    batchRequests = []
+            for n in range(0, numberOfEntities):
+                newEntity = self._createEntity(sgEntityType, sgData)
 
-    try:
-      for entity in requests:
-        if entity.connection() != self:
-          raise ValueError('entity %s does not belong to this connection %s' % (entity, self))
+                result.append(newEntity)
 
-        commitData = entity.toBatchData()
+            if sgCommit:
+                self.batch(result)
 
-        if len(commitData) <= 0:
-          continue
+            return result
 
-        batchRequests.append(
-          {
-            'entity': entity,
-            'batch_data': commitData
-          }
+    def delete(self, sgEntity):
+        '''
+        Deletes the passed Entity from Shotgun.
+
+        Args:
+          * (SgEntity) sgEntity:
+            Entity to delete.
+        '''
+
+        with sgEntity:
+            if sgEntity.connection() != self:
+                raise ValueError('entity %s does not belong to this connection %s' % (sgEntity, self))
+
+            batchData = [
+                {
+                    'request_type': 'delete',
+                    'entity_type': sgEntity.type,
+                    'entity_id': sgEntity['id']
+                }
+            ]
+
+            commitData = [
+                {
+                    'entity': sgEntity,
+                    'batch_data': batchData
+                }
+            ]
+
+            sgResult = self._batch(commitData)
+
+            return sgResult[0]
+
+    def defaultEntityQueryFields(self, sgEntityType):
+        '''
+        Returns the default query fields.
+
+        Args:
+          * (str) sgEntityType:
+            Entity type.
+        '''
+
+        schema = self.schema()
+
+        result = schema.defaultEntityQueryFields(
+            self.fieldQueryTemplate(),
+            schema.entityApiName(sgEntityType),
+            self.fieldQueryTemplateFallback()
         )
 
-      result = self._batch(batchRequests)
+        if result == set(['all']):
+            result = set(schema.entityInfo(sgEntityType).fieldNames())
+        elif result == set(['none']):
+            result = set([])
 
-      return result
-    finally:
-      for entity in requests:
-        entity._unlock()
+        return result
 
-  def classFactory(self):
-    '''
-    Returns the SgEntityClassFactory used by this connection to create Entity
-    objects.
-    '''
+    def disableCaching(self):
+        '''
+        Disables the caching of Entities.
+        '''
 
-    return self._factory
+        with self:
+            if not self.isCaching():
+                return False
 
-  def clearCache(self, sgEntityTypes=None, fieldValuesOnly=True):
-    '''
-    Clears all cached Entities.
+            self.__entityCaching = False
 
-    Args:
-      * (list) sgEntityTypes:
-        List of Entity types to clear.
+            # No need to break links for currently alive Entity objects so just clear
+            # the field value cache.
+            self.clearCache(fieldValuesOnly=True)
 
-      * (bool) fieldValuesOnly:
-        Only clear field values for Entities that are not currently in scope.
-        This will leave any weakref links to alive Entity objects alone.  Any
-        such Entity will have the ability to cache field values when gc'd.
-    '''
+            return True
 
-    with self:
-      if fieldValuesOnly:
-        if sgEntityTypes == None:
-          for entityType, entityCaches in self.__entityCache.items():
-            for entityId, entityCache in entityCaches.items():
-              entityCache['cache'].clear()
+    def enableCaching(self):
+        '''
+        Enables the caching of Entities.
+        '''
+
+        with self:
+            if self.isCaching():
+                return False
+
+            self.__entityCaching = True
+
+            return True
+
+    def fieldQueryTemplate(self):
+        '''
+        Returns the name of the template used for default field queries.
+        '''
+
+        return self._fieldQueryDefaults
+
+    def fieldQueryTemplateFallback(self):
+        '''
+        Returns the name of the fallback template used for default field queries.
+        '''
+
+        return self._fieldQueryDefaultsFallback
+
+    def find(
+        self,
+        entity_type,
+        filters,
+        fields=None,
+        order=None,
+        filter_operator=None,
+        limit=0,
+        retired_only=False,
+        page=0,
+        lazy=False
+    ):
+        '''
+        Find entities.
+
+        Args:
+          * (str) entity_type:
+            Entity type to find.
+
+          * (list) filters:
+            List of Shotgun formatted filters.
+
+          * (list) fields:
+            Fields that return results will have filled in with data from Shotgun.
+
+          * (list) order:
+            List of Shotgun formatted order filters.
+
+          * (str) filter_operator:
+            Controls how the filters are matched. There are only two valid
+            options: all and any. You cannot currently combine the two options in the
+            same query.
+
+          * (int) limit:
+            Limits the amount of Entities can be returned.
+
+          * (bool) retired_only:
+            Return only retired entities.
+
+          * (int) page:
+            Return a single specified page number of records instead of the entire
+            result set
+        '''
+
+        schema = self.schema()
+
+        entity_type = schema.entityApiName(entity_type)
+        filters = self._flattenFilters(filters)
+
+        if fields == None:
+            fields = self.defaultEntityQueryFields(entity_type)
         else:
-          if isinstance(sgEntityTypes, str):
-            sgEntityTypes = [sgEntityTypes]
+            if isinstance(fields, str):
+                fields = [fields]
 
-          for i in sgEntityTypes:
-            if not self.__entityCache.has_key(i):
-              continue
+            fields = set(fields)
 
-            for entityId, entityCache in self.__entityCache[i].items():
-              entityCache['cache'].clear()
-      else:
-        if sgEntityTypes == None:
-          self.__entityCache = {}
+            if 'default' in fields:
+                fields.discard('default')
+
+                fields.update(self.defaultEntityQueryFields(entity_type))
+
+            if 'all' in fields:
+                fields.discard('all')
+
+                fields.update(schema.entityInfo(entity_type).fieldNames())
+
+        ShotgunORM.LoggerConnection.debug('%(sgConnection)s.find(...)', {'sgConnection': self})
+        ShotgunORM.LoggerConnection.debug('    * entity_type: %(entityType)s', {'entityType': entity_type})
+        ShotgunORM.LoggerConnection.debug('    * filters: %(sgFilters)s', {'sgFilters': filters})
+        ShotgunORM.LoggerConnection.debug('    * fields: %(sgFields)s', {'sgFields': fields})
+
+        if lazy:
+            searchResult = ShotgunORM.SgLazyResultSet(
+                connection=self,
+                entity_type=entity_type,
+                filters=filters,
+                fields=fields,
+                order=order,
+                filter_operator=filter_operator,
+                limit=limit,
+                retired_only=retired_only,
+                page=page
+            )
         else:
-          if isinstance(sgEntityTypes, str):
-            sgEntityTypes = [sgEntityTypes]
+            searchResult = self._sg_find(
+                entity_type=entity_type,
+                filters=filters,
+                fields=fields,
+                order=order,
+                filter_operator=filter_operator,
+                limit=limit,
+                retired_only=retired_only,
+                page=page
+            )
+
+            if searchResult != None:
+                newResult = []
+
+                for i in searchResult:
+                    entity = self._createEntity(entity_type, i)
+
+                    newResult.append(entity)
+
+                searchResult = newResult
+
+        return searchResult
+
+    def findOne(
+        self,
+        entity_type,
+        filters=[],
+        fields=None,
+        order=None,
+        filter_operator=None,
+        retired_only=False,
+    ):
+        '''
+        Find one entity. This is a wrapper for find() with a limit=1. This will also
+        speeds the request as no paging information is requested from the server.
+
+        Args:
+          * (str) entity_type:
+            Entity type to find.
+
+          * (list) filters:
+            List of Shotgun formatted filters.
+
+          * (list) fields:
+            Fields that return results will have filled in with data from Shotgun.
+
+          * (list) order:
+            List of Shotgun formatted order filters.
+
+          * (str) filter_operator:
+            Controls how the filters are matched. There are only two valid
+            options: all and any. You cannot currently combine the two options in the
+            same query.
+
+          * (bool) retired_only:
+            Return only retired entities.
+        '''
+
+        if isinstance(filters, int):
+            schema = self.schema()
+
+            entity_type = schema.entityApiName(entity_type)
+
+            if self.__entityCache.has_key(entity_type):
+                iD = filters
+
+                if self.__entityCache[entity_type].has_key(iD):
+                    return self._createEntity(entity_type, {'id': iD, 'type': entity_type}, fields)
+
+        searchResult = self.find(
+            entity_type=entity_type,
+            filters=filters,
+            fields=fields,
+            order=order,
+            filter_operator=filter_operator,
+            limit=1,
+            retired_only=retired_only
+        )
+
+        if len(searchResult) >= 1:
+            return searchResult[0]
+        else:
+            return None
 
-          for i in sgEntityTypes:
-            if self.__entityCache.has_key(i):
-              del self.__entityCache[i]
+    def isCaching(self):
+        '''
+        Returns True if the connection is caching Entities
+        '''
 
-  def create(self, sgEntityType, sgData={}, sgCommit=False, numberOfEntities=1):
-    '''
-    Creates a new Entity and returns it.  The returned Entity does not exist in
-    the Shotgun database.
+        return self.__entityCaching
 
-    Args:
-      * (str) sgEntityType:
-        Type of Entity to create.
+    def queryEngine(self):
+        '''
+        Query Engine that performs background Entity field pulling.
+        '''
 
-      * (dict) sgData:
-        Shotgun formated dictionary of field data.
+        return self.__qEngine
 
-      * (bool) sgCommit:
-        Commits the result immediately to Shotgun.
+    def revive(self, sgEntity):
+        '''
+        Revives (un-deletes) the Entity matching entity_type and entity_id.
 
-      * (int) numberOfEntities:
-        Number of Entities to create.
-    '''
+        Args:
+          * (SgEntity) sgEntity
+            Entity to revive
+        '''
 
-    ShotgunORM.LoggerConnection.debug('%(connection)s.create(...)', {'connection': self})
-    ShotgunORM.LoggerConnection.debug('    * sgEntityType: %(entityName)s', {'entityName': sgEntityType})
-    ShotgunORM.LoggerConnection.debug('    * sgData: %(sgData)s', {'sgData': sgData})
-    ShotgunORM.LoggerConnection.debug('    * sgCommit: %(sgCommit)s', {'sgCommit': sgCommit})
+        with sgEntity:
+            if sgEntity.connection() != self:
+                raise ValueError('entity %s does not belong to this connection %s' % (sgEntity, self))
 
-    factory = self.classFactory()
+            batchData = [
+                {
+                    'request_type': 'revive',
+                    'entity_type': sgEntity.type,
+                    'entity_id': sgEntity['id']
+                }
+            ]
 
-    numberOfEntities = max(1, numberOfEntities)
+            commitData = {}
 
-    sgData = self._flattenFilters(sgData)
+            try:
+                sgEntity.beforeCommit(batchData, commitData)
+            except Exception, e:
+                try:
+                    sgEntity.afterCommit(batchData, None, commitData, e)
+                except:
+                    pass
 
-    if numberOfEntities == 1:
-      newEntity = self._createEntity(sgEntityType, sgData)
+                raise e
 
-      if sgCommit:
-        newEntity.commit()
+            sgResult = None
 
-      return newEntity
-    else:
-      result = []
+            try:
+                sgResult = self._sg_revive(sgEntity.type, sgEntity['id'])
+            except Exception, e:
+                try:
+                    sgEntity.afterCommit(batchData, None, commitData, e)
+                except:
+                    pass
 
-      for n in range(0, numberOfEntities):
-        newEntity = self._createEntity(sgEntityType, sgData)
+                raise e
 
-        result.append(newEntity)
+            sgEntity.afterCommit(batchData, [sgResult], commitData)
 
-      if sgCommit:
-        self.batch(result)
+            return sgResult
 
-      return result
+    def schema(self):
+        '''
+        Returns the SgSchema used by the connection.
+        '''
 
-  def delete(self, sgEntity):
-    '''
-    Deletes the passed Entity from Shotgun.
+        return self.__schema
 
-    Args:
-      * (SgEntity) sgEntity:
-        Entity to delete.
-    '''
+    def schemaChanged(self):
+        '''
+        This is called when the parent SgConnection's schema has been updated.
+        '''
 
-    with sgEntity:
-      if sgEntity.connection() != self:
-        raise ValueError('entity %s does not belong to this connection %s' % (sgEntity, self))
+        factory = self.classFactory()
 
-      batchData = [
-        {
-          'request_type': 'delete',
-          'entity_type': sgEntity.type,
-          'entity_id': sgEntity['id']
-        }
-      ]
+        with self:
+            factory.build()
 
-      commitData = [
-        {
-          'entity': sgEntity,
-          'batch_data': batchData
-        }
-      ]
+            # Blast the field cache.
+            self.clearCache()
 
-      sgResult = self._batch(commitData)
+        # In the future this could support live updating of SgEntitySchemaInfo objects.
 
-      return sgResult[0]
+    def search(self, sgEntityType, sgSearchExp, sgFields=None, sgSearchArgs=[], order=None, limit=0, retired_only=False, page=0):
+        '''
+        Uses a search string to find entities in Shotgun instead of a list.
 
-  def defaultEntityQueryFields(self, sgEntityType):
-    '''
-    Returns the default query fields.
+        For more information on the search syntax check the ShotgunORM documentation.
 
-    Args:
-      * (str) sgEntityType:
-        Entity type.
-    '''
+        Args:
+          * (str) sgEntityType:
+            Entity type to find.
 
-    schema = self.schema()
+          * (str) sgSearchExp:
+            Search expression string.
 
-    result = schema.defaultEntityQueryFields(
-      self.fieldQueryTemplate(),
-      schema.entityApiName(sgEntityType),
-      self.fieldQueryTemplateFallback()
-    )
+          * (list) sgFields:
+            Fields that return results will have filled in with data from Shotgun.
 
-    if result == set(['all']):
-      result = set(schema.entityInfo(sgEntityType).fieldNames())
-    elif result == set(['none']):
-      result = set([])
-
-    return result
+          * (list) sgSearchArgs:
+            Args used by the search expression string during evaluation.
 
-  def disableCaching(self):
-    '''
-    Disables the caching of Entities.
-    '''
+          * (list) order:
+            List of Shotgun formatted order filters.
 
-    with self:
-      if not self.isCaching():
-        return False
+          * (int) limit:
+            Limits the amount of Entities can be returned.
 
-      self.__entityCaching = False
+          * (bool) retired_only:
+            Return only retired entities.
 
-      # No need to break links for currently alive Entity objects so just clear
-      # the field value cache.
-      self.clearCache(fieldValuesOnly=True)
+          * (int) page:
+            Return a single specified page number of records instead of the entire
+            result set.
+        '''
 
-      return True
+        schema = self.schema()
 
-  def enableCaching(self):
-    '''
-    Enables the caching of Entities.
-    '''
+        sgconnection = self.connection()
 
-    with self:
-      if self.isCaching():
-        return False
-
-      self.__entityCaching = True
+        entity_type = schema.entityApiName(sgEntityType)
 
-      return True
+        ShotgunORM.LoggerConnection.debug('%(sgConnection)s.search(...)', {'sgConnection': self})
+        ShotgunORM.LoggerConnection.debug('    * entity_type: %(entityType)s', {'entityType': entity_type})
+        ShotgunORM.LoggerConnection.debug('    * search_exp: "%(sgSearchExp)s"', {'sgSearchExp': sgSearchExp})
+        ShotgunORM.LoggerConnection.debug('    * fields: %(sgFields)s', {'sgFields': sgFields})
 
-  def fieldQueryTemplate(self):
-    '''
-    Returns the name of the template used for default field queries.
-    '''
+        filters = ShotgunORM.parseToLogicalOp(
+            schema.entityInfo(entity_type),
+            sgSearchExp,
+            sgSearchArgs
+        )
 
-    return self._fieldQueryDefaults
+        filters = self._flattenFilters(filters)
 
-  def fieldQueryTemplateFallback(self):
-    '''
-    Returns the name of the fallback template used for default field queries.
-    '''
+        if sgFields == None:
+            sgFields = self.defaultEntityQueryFields(entity_type)
+        else:
+            if isinstance(sgFields, str):
+                sgFields = [sgFields]
 
-    return self._fieldQueryDefaultsFallback
+            sgFields = set(sgFields)
 
-  def find(
-    self,
-    entity_type,
-    filters,
-    fields=None,
-    order=None,
-    filter_operator=None,
-    limit=0,
-    retired_only=False,
-    page=0
-  ):
-    '''
-    Find entities.
-
-    Args:
-      * (str) entity_type:
-        Entity type to find.
+            if 'default' in sgFields:
+                sgFields.discard('default')
 
-      * (list) filters:
-        List of Shotgun formatted filters.
+                sgFields.update(self.defaultEntityQueryFields(entity_type))
 
-      * (list) fields:
-        Fields that return results will have filled in with data from Shotgun.
+        return self.find(
+            entity_type,
+            filters,
+            sgFields,
+            order=order,
+            limit=limit,
+            retired_only=retired_only,
+            page=page
+        )
 
-      * (list) order:
-        List of Shotgun formatted order filters.
+    def searchOne(self, sgEntityType, sgSearchExp, sgFields=None, sgSearchArgs=[], order=None, retired_only=False):
+        '''
+        Same as search(...) but only returns a single Entity.
 
-      * (str) filter_operator:
-        Controls how the filters are matched. There are only two valid
-        options: all and any. You cannot currently combine the two options in the
-        same query.
+        Args:
+          * (str) sgEntityType:
+            Entity type to find.
 
-      * (int) limit:
-        Limits the amount of Entities can be returned.
+          * (str) sgSearchExp:
+            Search expression string.
 
-      * (bool) retired_only:
-        Return only retired entities.
+          * (list) sgFields:
+            Fields that return results will have filled in with data from Shotgun.
 
-      * (int) page:
-        Return a single specified page number of records instead of the entire
-        result set
-    '''
+          * (list) sgSearchArgs:
+            Args used by the search expression string during evaluation.
 
-    schema = self.schema()
+          * (list) order:
+            List of Shotgun formatted order filters.
 
-    entity_type = schema.entityApiName(entity_type)
-    filters = self._flattenFilters(filters)
+          * (int) limit:
+            Limits the amount of Entities can be returned.
 
-    if fields == None:
-      fields = self.defaultEntityQueryFields(entity_type)
-    else:
-      if isinstance(fields, str):
-        fields = [fields]
-
-      fields = set(fields)
+          * (bool) retired_only:
+            Return only retired entities.
+        '''
 
-      if 'default' in fields:
-        fields.discard('default')
-
-        fields.update(self.defaultEntityQueryFields(entity_type))
-
-      if 'all' in fields:
-        fields.discard('all')
+        result = self.search(sgEntityType, sgSearchExp, sgFields, sgSearchArgs, order=order, limit=1, retired_only=retired_only)
 
-        fields.update(schema.entityInfo(entity_type).fieldNames())
-
-    ShotgunORM.LoggerConnection.debug('%(sgConnection)s.find(...)', {'sgConnection': self})
-    ShotgunORM.LoggerConnection.debug('    * entity_type: %(entityType)s', {'entityType': entity_type})
-    ShotgunORM.LoggerConnection.debug('    * filters: %(sgFilters)s', {'sgFilters': filters})
-    ShotgunORM.LoggerConnection.debug('    * fields: %(sgFields)s', {'sgFields': fields})
+        if len(result) >= 1:
+            return result[0]
 
-    searchResult = self._sg_find(
-      entity_type=entity_type,
-      filters=filters,
-      fields=fields,
-      order=order,
-      filter_operator=filter_operator,
-      limit=limit,
-      retired_only=retired_only,
-      page=page
-    )
-
-    if searchResult != None:
-      newResult = []
-
-      for i in searchResult:
-        entity = self._createEntity(entity_type, i)
-
-        newResult.append(entity)
-
-      searchResult = newResult
-
-    return searchResult
-
-  def findOne(
-    self,
-    entity_type,
-    filters=[],
-    fields=None,
-    order=None,
-    filter_operator=None,
-    retired_only=False,
-  ):
-    '''
-    Find one entity. This is a wrapper for find() with a limit=1. This will also
-    speeds the request as no paging information is requested from the server.
-
-    Args:
-      * (str) entity_type:
-        Entity type to find.
-
-      * (list) filters:
-        List of Shotgun formatted filters.
-
-      * (list) fields:
-        Fields that return results will have filled in with data from Shotgun.
-
-      * (list) order:
-        List of Shotgun formatted order filters.
+        return None
 
-      * (str) filter_operator:
-        Controls how the filters are matched. There are only two valid
-        options: all and any. You cannot currently combine the two options in the
-        same query.
-
-      * (bool) retired_only:
-        Return only retired entities.
-    '''
-
-    if isinstance(filters, int):
-      schema = self.schema()
+    def setFieldQueryTemplate(self, sgQueryTemplate):
+        '''
+        Sets the connections default field query template.
 
-      entity_type = schema.entityApiName(entity_type)
+        Args:
+          * (str) sgQueryTemplate:
+            Name of the query template.
+        '''
 
-      if self.__entityCache.has_key(entity_type):
-        iD = filters
+        if not isinstance(sgQueryTemplate, (str, types.NoneType)):
+            raise TypeError('expected a str for sgQueryTemplate, got %s' % type(sgQueryTemplate).__name__)
 
-        if self.__entityCache[entity_type].has_key(iD):
-          return self._createEntity(entity_type, {'id': iD, 'type': entity_type}, fields)
+        self._fieldQueryDefaults = sgQueryTemplate
 
-    searchResult = self.find(
-      entity_type=entity_type,
-      filters=filters,
-      fields=fields,
-      order=order,
-      filter_operator=filter_operator,
-      limit=1,
-      retired_only=retired_only
-    )
+    def setFieldQueryTemplateFallback(self, sgQueryTemplate):
+        '''
+        Sets the connections default field query template fallback.
 
-    if len(searchResult) >= 1:
-      return searchResult[0]
-    else:
-      return None
+        Args:
+          * (str) sgQueryTemplate:
+            Name of the query template.
+        '''
 
-  def isCaching(self):
-    '''
-    Returns True if the connection is caching Entities
-    '''
+        if not isinstance(sgQueryTemplate, (str, types.NoneType)):
+            raise TypeError('expected a str for sgQueryTemplate, got %s' % type(sgQueryTemplate).__name__)
 
-    return self.__entityCaching
-
-  def queryEngine(self):
-    '''
-    Query Engine that performs background Entity field pulling.
-    '''
-
-    return self.__qEngine
-
-  def revive(self, sgEntity):
-    '''
-    Revives (un-deletes) the Entity matching entity_type and entity_id.
-
-    Args:
-      * (SgEntity) sgEntity
-        Entity to revive
-    '''
-
-    with sgEntity:
-      if sgEntity.connection() != self:
-        raise ValueError('entity %s does not belong to this connection %s' % (sgEntity, self))
-
-      batchData = [
-        {
-          'request_type': 'revive',
-          'entity_type': sgEntity.type,
-          'entity_id': sgEntity['id']
-        }
-      ]
-
-      commitData = {}
-
-      try:
-        sgEntity.beforeCommit(batchData, commitData)
-      except Exception, e:
-        try:
-          sgEntity.afterCommit(batchData, None, commitData, e)
-        except:
-          pass
-
-        raise e
-
-      sgResult = None
-
-      try:
-        sgResult = self._sg_revive(sgEntity.type, sgEntity['id'])
-      except Exception, e:
-        try:
-          sgEntity.afterCommit(batchData, None, commitData, e)
-        except:
-          pass
-
-        raise e
-
-      sgEntity.afterCommit(batchData, [sgResult], commitData)
-
-      return sgResult
-
-  def schema(self):
-    '''
-    Returns the SgSchema used by the connection.
-    '''
-
-    return self.__schema
-
-  def schemaChanged(self):
-    '''
-    This is called when the parent SgConnection's schema has been updated.
-    '''
-
-    factory = self.classFactory()
-
-    with self:
-      factory.build()
-
-      # Blast the field cache.
-      self.clearCache()
-
-    # In the future this could support live updating of SgEntitySchemaInfo objects.
-
-  def search(self, sgEntityType, sgSearchExp, sgFields=None, sgSearchArgs=[], order=None, limit=0, retired_only=False, page=0):
-    '''
-    Uses a search string to find entities in Shotgun instead of a list.
-
-    For more information on the search syntax check the ShotgunORM documentation.
-
-    Args:
-      * (str) sgEntityType:
-        Entity type to find.
-
-      * (str) sgSearchExp:
-        Search expression string.
-
-      * (list) sgFields:
-        Fields that return results will have filled in with data from Shotgun.
-
-      * (list) sgSearchArgs:
-        Args used by the search expression string during evaluation.
-
-      * (list) order:
-        List of Shotgun formatted order filters.
-
-      * (int) limit:
-        Limits the amount of Entities can be returned.
-
-      * (bool) retired_only:
-        Return only retired entities.
-
-      * (int) page:
-        Return a single specified page number of records instead of the entire
-        result set.
-    '''
-
-    schema = self.schema()
-
-    sgconnection = self.connection()
-
-    entity_type = schema.entityApiName(sgEntityType)
-
-    ShotgunORM.LoggerConnection.debug('%(sgConnection)s.search(...)', {'sgConnection': self})
-    ShotgunORM.LoggerConnection.debug('    * entity_type: %(entityType)s', {'entityType': entity_type})
-    ShotgunORM.LoggerConnection.debug('    * search_exp: "%(sgSearchExp)s"', {'sgSearchExp': sgSearchExp})
-    ShotgunORM.LoggerConnection.debug('    * fields: %(sgFields)s', {'sgFields': sgFields})
-
-    filters = ShotgunORM.parseToLogicalOp(
-      schema.entityInfo(entity_type),
-      sgSearchExp,
-      sgSearchArgs
-    )
-
-    filters = self._flattenFilters(filters)
-
-    if sgFields == None:
-      sgFields = self.defaultEntityQueryFields(entity_type)
-    else:
-      if isinstance(sgFields, str):
-        sgFields = [sgFields]
-
-      sgFields = set(sgFields)
-
-      if 'default' in sgFields:
-        sgFields.discard('default')
-
-        sgFields.update(self.defaultEntityQueryFields(entity_type))
-
-    return self.find(
-      entity_type,
-      filters,
-      sgFields,
-      order=order,
-      limit=limit,
-      retired_only=retired_only,
-      page=page
-    )
-
-  def searchOne(self, sgEntityType, sgSearchExp, sgFields=None, sgSearchArgs=[], order=None, retired_only=False):
-    '''
-    Same as search(...) but only returns a single Entity.
-
-    Args:
-      * (str) sgEntityType:
-        Entity type to find.
-
-      * (str) sgSearchExp:
-        Search expression string.
-
-      * (list) sgFields:
-        Fields that return results will have filled in with data from Shotgun.
-
-      * (list) sgSearchArgs:
-        Args used by the search expression string during evaluation.
-
-      * (list) order:
-        List of Shotgun formatted order filters.
-
-      * (int) limit:
-        Limits the amount of Entities can be returned.
-
-      * (bool) retired_only:
-        Return only retired entities.
-    '''
-
-    result = self.search(sgEntityType, sgSearchExp, sgFields, sgSearchArgs, order=order, limit=1, retired_only=retired_only)
-
-    if len(result) >= 1:
-      return result[0]
-
-    return None
-
-  def setFieldQueryTemplate(self, sgQueryTemplate):
-    '''
-    Sets the connections default field query template.
-
-    Args:
-      * (str) sgQueryTemplate:
-        Name of the query template.
-    '''
-
-    if not isinstance(sgQueryTemplate, (str, types.NoneType)):
-      raise TypeError('expected a str for sgQueryTemplate, got %s' % type(sgQueryTemplate).__name__)
-
-    self._fieldQueryDefaults = sgQueryTemplate
-
-  def setFieldQueryTemplateFallback(self, sgQueryTemplate):
-    '''
-    Sets the connections default field query template fallback.
-
-    Args:
-      * (str) sgQueryTemplate:
-        Name of the query template.
-    '''
-
-    if not isinstance(sgQueryTemplate, (str, types.NoneType)):
-      raise TypeError('expected a str for sgQueryTemplate, got %s' % type(sgQueryTemplate).__name__)
-
-    self._fieldQueryDefaultsFallback = sgQueryTemplate
+        self._fieldQueryDefaultsFallback = sgQueryTemplate

@@ -21,6 +21,7 @@ class SgLazyResultSet(object):
     ):
         self._connection = connection
         self._entity_type = entity_type
+        self._filters = filters
         self._sg_find_args = {
             'entity_type': entity_type,
             'filters': filters,
@@ -41,14 +42,14 @@ class SgLazyResultSet(object):
         if not hasattr(self, '_summaries'):
             self._summaries = self._connection.connection().summarize(
                 entity_type=self._entity_type,
-                filters=[],
+                filters=self._filters,
                 summary_fields=[{'field': 'id', 'type': 'count'}]
             ).get('summaries')
         return self._summaries.get('id')
 
     def __getitem__(self, key):
+        _sg_find_args = self._sg_find_args.copy()
         if isinstance(key, slice):
-            _sg_find_args = self._sg_find_args.copy()
             start, stop, step = key.start, key.stop, key.step
             slice_limit = stop - start
             slice_page = start / slice_limit
@@ -60,8 +61,7 @@ class SgLazyResultSet(object):
             return [self._connection._createEntity(self._entity_type, data)
                     for data in query]
         else:
-            query = self._connection._sg_find(
-                self._entity_type, self.filters, self.fields)
+            query = self._connection._sg_find(**_sg_find_args)
             return self._connection._createEntity(self._entity_type, query[key])
 
     def to_list(self):

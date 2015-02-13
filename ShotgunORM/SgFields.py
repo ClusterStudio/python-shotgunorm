@@ -39,6 +39,7 @@ __all__ = [
   'SgFieldSelectionList',
   'SgFieldTagList',
   'SgFieldText',
+  'SgFieldTimeCode',
   'SgFieldType',
   'SgFieldUrl'
 ]
@@ -49,6 +50,7 @@ import datetime
 import os
 import re
 import threading
+import time
 import urllib2
 import webbrowser
 
@@ -184,12 +186,18 @@ class SgFieldColor2(ShotgunORM.SgField):
   REGEXP_TASK_COLOR = re.compile(r'(\d+,\d+,\d+)|(pipeline_step)')
   REGEXP_PHASE_COLOR = re.compile(r'(\d+,\d+,\d+)|(project)')
 
-  def __init__(self, name, label=None, sgFieldSchemaInfo=None):
-    super(SgFieldColor2, self).__init__(name, label=label, sgFieldSchemaInfo=sgFieldSchemaInfo)
-
+  def __init__(self, name, label=None, sgFieldSchemaInfo=None, sgEntity=None):
     self._regexp = self.REGEXP_COLOR
     self._linkString = None
     self._linkField = None
+    self._linkEntity = None
+
+    super(SgFieldColor2, self).__init__(
+      name,
+      label=label,
+      sgFieldSchemaInfo=sgFieldSchemaInfo,
+      sgEntity=sgEntity
+    )
 
   def _fromFieldData(self, sgData):
     if sgData == None:
@@ -209,6 +217,11 @@ class SgFieldColor2(ShotgunORM.SgField):
     self._value = sgData
 
     return True
+
+  def _invalidate(self):
+    super(SgFieldColor2, self)._invalidate()
+
+    self._linkEntity = None
 
   def returnType(self):
     return self.RETURN_TYPE_COLOR2
@@ -264,6 +277,8 @@ class SgFieldColor2(ShotgunORM.SgField):
 
     pType = parent.schemaInfo().name()
 
+    self._linkEntity = None
+
     if pType == 'Task':
       self._regexp = self.REGEXP_TASK_COLOR
       self._linkString = 'pipeline_step'
@@ -305,17 +320,24 @@ class SgFieldColor2(ShotgunORM.SgField):
         newResult.append(int(i))
 
     if result == self._linkString:
-      linkObj = self.parentEntity()[self._linkField]
+      if self._linkEntity != None:
+        return self._linkEntity['color']
 
-      if linkObj == None:
+      self._linkEntity = self.parentEntity().field(
+        self._linkField
+      ).value(['color'])
+
+      if self._linkEntity == None:
         return None
 
-      return linkObj['color']
+      return self._linkEntity['color']
     else:
       newResult = []
 
       for i in result.split(','):
         newResult.append(int(i))
+
+      return newResult
 
 class SgFieldDate(ShotgunORM.SgField):
   '''
@@ -427,10 +449,7 @@ class SgFieldEntity(ShotgunORM.SgField):
       return result
 
     try:
-      newValue = {
-        'type': sgData['type'],
-        'id': sgData['id']
-      }
+      newValue = copy.deepcopy(sgData)
 
       # This fixes the two Entities as their name field is only available when
       # returned as another Entities field value.
@@ -500,7 +519,10 @@ class SgFieldEntity(ShotgunORM.SgField):
     if self._value == None:
       return None
 
-    return dict(self._value)
+    return {
+      'id': self._value['id'],
+      'type': self._value['type']
+    }
 
   def value(self, sgSyncFields=None):
     '''
@@ -521,7 +543,7 @@ class SgFieldEntity(ShotgunORM.SgField):
     connection = parent.connection()
 
     if isinstance(sgSyncFields, dict):
-      sgSyncFields = sgSyncFields.get(parent.type, None)
+      sgSyncFields = sgSyncFields.get(value['type'], None)
     elif isinstance(sgSyncFields, str):
       sgSyncFields = [sgSyncFields]
 
@@ -720,7 +742,7 @@ class SgFieldEntityMulti(ShotgunORM.SgField):
     result = super(SgFieldEntityMulti, self).value()
 
     if result in [None, []]:
-      return result
+      return []
 
     parent = self.parentEntity()
 
@@ -891,6 +913,20 @@ class SgFieldSelectionList(ShotgunORM.SgField):
 
     return True
 
+  def displayValue(self):
+    '''
+    Returns the display string of the selections value.
+
+    If no display string exists then the selections value is returned instead.
+    '''
+
+    val = self.value()
+
+    return self.schemaInfo().displayValues().get(
+      val,
+      val
+    )
+
   def returnType(self):
     return self.RETURN_TYPE_LIST
 
@@ -935,7 +971,7 @@ class SgFieldSerializable(ShotgunORM.SgField):
 
       return result
 
-    if not isinstance(sgData, dict):
+    if not isinstance(sgData, (dict, list)):
       raise ValueError('%s invalid data from Shotgun "%s", expected a dict' % (self, sgData))
 
     if self._value == sgData:
@@ -959,7 +995,7 @@ class SgFieldSerializable(ShotgunORM.SgField):
 
       return result
 
-    if not isinstance(sgData, dict):
+    if not isinstance(sgData, (dict, list)):
       raise TypeError('%s invalid value type "%s", expected a dict' % (self, type(sgData).__name__))
 
     if self._value == sgData:
@@ -990,8 +1026,13 @@ class SgFieldSummary(ShotgunORM.SgField):
 
   DATE_REGEXP = re.compile(r'(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2}) UTC')
 
-  def __init__(self, name, label=None, sgFieldSchemaInfo=None):
-    super(SgFieldSummary, self).__init__(name, label=label, sgFieldSchemaInfo=sgFieldSchemaInfo)
+  def __init__(self, name, label=None, sgFieldSchemaInfo=None, sgEntity=None):
+    super(SgFieldSummary, self).__init__(
+      name,
+      label=label,
+      sgFieldSchemaInfo=sgFieldSchemaInfo,
+      sgEntity=sgEntity
+    )
 
     self.__buildLock = threading.Lock()
 
@@ -1561,10 +1602,93 @@ class SgFieldText(ShotgunORM.SgField):
 
     return True
 
+class SgFieldTimeCode(ShotgunORM.SgField):
+  '''
+  Entity field that stores timecode.
+  '''
+
+  def _fromFieldData(self, sgData):
+    if sgData != None:
+      try:
+        sgData = int(sgData)
+      except:
+        raise ValueError('%s invalid data from Shotgun "%s", expected a int' % (self, sgData))
+
+      if abs(sgData) > 86400000:
+        ShotgunORM.LoggerField.warn(
+          '%(sgField)s._fromFieldData(sgData) timecode value from shotgun is '
+          'greater than the milliseconds in a day, value=%(value)s',
+          {
+            'sgField': self,
+            'value': sgData
+          }
+        )
+
+    if self._value == sgData:
+      return False
+
+    self._value = sgData
+
+    return True
+
+  def returnType(self):
+    return self.RETURN_TYPE_TIMECODE
+
+  def _setValue(self, sgData):
+    if sgData != None:
+      try:
+        sgData = int(sgData)
+      except:
+        raise TypeError('%s invalid value type "%s", expected a int' % (self, type(sgData).__name__))
+
+      if abs(sgData) > 86400000:
+        raise ValueError('timecode value can not be greater than 86400000')
+
+    if self._value == sgData:
+      return False
+
+    self._value = sgData
+
+    return True
+
 class SgFieldImage(SgFieldText):
   '''
   See SgFieldText.
   '''
+
+  REGEXP_EXPIRETIME = re.compile(r'\?(?:AWS)?AccessKeyId=.*&Expires=(\d+)&Signature=')
+
+  def __init__(self, name, label=None, sgFieldSchemaInfo=None, sgEntity=None):
+    super(SgFieldImage, self).__init__(
+      name,
+      label=label,
+      sgFieldSchemaInfo=sgFieldSchemaInfo,
+      sgEntity=sgEntity
+    )
+
+    self.__expireTime = 0
+
+  def _invalidate(self):
+    self.__expireTime = 0
+
+  def _validate(self, forReal=False):
+    result = super(SgFieldImage, self)._validate(forReal)
+
+    if forReal and self._value != None:
+      search = self.REGEXP_EXPIRETIME.search(self._value)
+
+      if search == None:
+        ShotgunORM.LoggerField.warn(
+          '%(sgField)s._validate() unable to find image expire time in %(image)s',
+          {
+            'sgField': self,
+            'image': self._value
+          }
+        )
+      else:
+        self.__expireTime = int(search.group(1))
+
+    return result
 
   def downloadThumbnail(self, path):
     '''
@@ -1593,9 +1717,60 @@ class SgFieldImage(SgFieldText):
         'error': e
       })
 
-      raise RuntimeError('%s an error occured while downloading the file' % self)
+      raise RuntimeError(
+        '%s an error occured while downloading the file, %s' % (
+          self,
+          e
+
+        )
+      )
 
     return True
+
+  def filename(self):
+    '''
+    Returns the filename of the image url.
+
+    Returns an empty string if the field is not set.
+    '''
+
+    img = self.value()
+
+    if img == None:
+      return ''
+
+    search = self.REGEXP_EXPIRETIME.search(img)
+
+    if search != None:
+      return img[:search.span(0)[0]].rsplit('/', 1)[-1]
+
+    return img.replace('\\', '/').rsplit('/', 1)[-1]
+
+  def isLinkExpired(self):
+    '''
+    Returns True if the image fields value has expired and can no longer be
+    downloaded.
+    '''
+
+    return (
+      self.__expireTime != 0 and
+      time.time() >= self.__expireTime
+    )
+
+  def isValid(self):
+    if super(SgFieldImage, self).isValid():
+      return not self.isLinkExpired()
+
+    return False
+
+  def linkExpireTime(self):
+    '''
+    Returns the links expire time.
+
+    When the field has not yet validated returns 0.
+    '''
+
+    return self.__expireTime
 
   def openInBrowser(self):
     '''
@@ -1604,13 +1779,21 @@ class SgFieldImage(SgFieldText):
 
     url = self.value()
 
-    if url == None:
-      url = ''
-
-    webbrowser.open(url)
+    if url != None and url != '':
+      webbrowser.open(url)
 
   def returnType(self):
     return self.RETURN_TYPE_IMAGE
+
+  def secondsTillExpired(self):
+    '''
+    Returns the number of seconds till the link is expired.
+    '''
+
+    if self.__expireTime == 0:
+      return -1
+    else:
+      return self.__expireTime - time.time()
 
   def uploadThumbnail(self, path):
     '''
@@ -1659,11 +1842,11 @@ class SgFieldImage(SgFieldText):
 
       parent = self.parentEntity()
 
-      if not parent.type == 'Version':
-        raise RuntimeError('only valid on Version Entities')
-
       if parent == None or not parent.exist():
         raise RuntimeError('parent entity does not exists')
+
+      if not parent.type == 'Version':
+        raise RuntimeError('only valid on Version Entities')
 
       sgconnection = parent.connection().connection()
 
@@ -1692,6 +1875,21 @@ class SgFieldUrl(ShotgunORM.SgField):
   }
   '''
 
+  REGEXP_EXPIRETIME = re.compile(r'\?(?:AWS)?AccessKeyId=.*&Expires=(\d+)&Signature=')
+
+  def __init__(self, name, label=None, sgFieldSchemaInfo=None, sgEntity=None):
+    super(SgFieldUrl, self).__init__(
+      name,
+      label=label,
+      sgFieldSchemaInfo=sgFieldSchemaInfo,
+      sgEntity=sgEntity
+    )
+
+    self.__expireTime = 0
+
+  def _invalidate(self):
+    self.__expireTime = 0
+
   def _fromFieldData(self, sgData):
     result = {}
 
@@ -1712,7 +1910,13 @@ class SgFieldUrl(ShotgunORM.SgField):
       if result['link_type'] in ['upload', 'web']:
         result['url'] = sgData['url']
       else:
+        result['id'] = sgData['id']
+        result['local_path'] = sgData['local_path']
+        result['local_path_linux'] = sgData['local_path_linux']
+        result['local_path_mac'] = sgData['local_path_mac']
+        result['local_path_windows'] = sgData['local_path_windows']
         result['local_storage'] = sgData['local_storage']
+        result['type'] = sgData['type']
 
       result['name'] = sgData['name']
       result['content_type'] = sgData.get('content_type', None)
@@ -1731,8 +1935,44 @@ class SgFieldUrl(ShotgunORM.SgField):
 
     return True
 
+  def isLinkExpired(self):
+    '''
+    Returns True if the url fields value has expired and can no longer be
+    downloaded.
+    '''
+
+    return (
+      self.__expireTime != 0 and
+      time.time() >= self.__expireTime
+    )
+
+  def isValid(self):
+    if super(SgFieldUrl, self).isValid():
+      return not self.isLinkExpired()
+
+    return False
+
+  def linkExpireTime(self):
+    '''
+    Returns the links expire time.
+
+    When the field has not yet validated returns 0.
+    '''
+
+    return self.__expireTime
+
   def returnType(self):
     return self.RETURN_TYPE_URL
+
+  def secondsTillExpired(self):
+    '''
+    Returns the number of seconds till the link is expired.
+    '''
+
+    if self.__expireTime == 0:
+      return -1
+    else:
+      return self.__expireTime - time.time()
 
   def setValue(self, sgData):
     return self.fromFieldData(sgData)
@@ -1742,6 +1982,26 @@ class SgFieldUrl(ShotgunORM.SgField):
       return None
 
     return copy.deepcopy(self._value)
+
+  def _validate(self, forReal=False):
+    result = super(SgFieldUrl, self)._validate(forReal)
+
+    if forReal and self._value != None:
+      if self._value['link_type'] in ['url', 'upload']:
+        search = self.REGEXP_EXPIRETIME.search(self._value['url'])
+
+        if search == None:
+          ShotgunORM.LoggerField.warn(
+            '%(sgField)s._validate() unable to find url expire time in %(url)s',
+            {
+              'sgField': self,
+              'url': self._value
+            }
+          )
+        else:
+          self.__expireTime = int(search.group(1))
+
+    return result
 
   def _Value(self):
     return self._toFieldData()
@@ -1771,6 +2031,32 @@ class SgFieldUrl(ShotgunORM.SgField):
 
     return result
 
+  def urlName(self):
+    '''
+    Returns the url filename.
+    '''
+
+    data = self.value()
+
+    if data == None:
+      return ''
+
+    return data['name']
+
+  def urlType(self):
+    '''
+    Returns the Shotgun url type.
+
+    Valid return value are None, "local", "url", "upload".
+    '''
+
+    data = self.value()
+
+    if data == None:
+      return None
+
+    return data['link_type']
+
 # Register the fields.
 ShotgunORM.SgField.registerFieldClass(ShotgunORM.SgField.RETURN_TYPE_CHECKBOX, SgFieldCheckbox)
 ShotgunORM.SgField.registerFieldClass(ShotgunORM.SgField.RETURN_TYPE_COLOR, SgFieldColor)
@@ -1788,6 +2074,7 @@ ShotgunORM.SgField.registerFieldClass(ShotgunORM.SgField.RETURN_TYPE_STATUS_LIST
 ShotgunORM.SgField.registerFieldClass(ShotgunORM.SgField.RETURN_TYPE_SUMMARY, SgFieldSummary)
 ShotgunORM.SgField.registerFieldClass(ShotgunORM.SgField.RETURN_TYPE_TAG_LIST, SgFieldTagList)
 ShotgunORM.SgField.registerFieldClass(ShotgunORM.SgField.RETURN_TYPE_TEXT, SgFieldText)
+ShotgunORM.SgField.registerFieldClass(ShotgunORM.SgField.RETURN_TYPE_TIMECODE, SgFieldTimeCode)
 ShotgunORM.SgField.registerFieldClass(ShotgunORM.SgField.RETURN_TYPE_URL, SgFieldUrl)
 
 ################################################################################
@@ -1808,14 +2095,12 @@ class SgFieldID(SgFieldInt):
   def __exit__(self, exc_type, exc_value, traceback):
     return False
 
-  def __init__(self, parentEntity, sgFieldSchemaInfo):
-    super(SgFieldID, self).__init__(None, None, sgFieldSchemaInfo)
+  def __init__(self, sgFieldSchemaInfo, sgEntity):
+    super(SgFieldID, self).__init__(None, None, sgFieldSchemaInfo, sgEntity)
 
-    self._SgField__setParentEntity(parentEntity)
+    super(SgFieldID, self).setValid(True)
 
-    self._SgField__valid = True
-
-  def invalidate(self):
+  def invalidate(self, force=True):
     '''
     Does nothing for ID fields.
     '''
@@ -1885,14 +2170,12 @@ class SgFieldType(SgFieldText):
   def __exit__(self, exc_type, exc_value, traceback):
     return False
 
-  def __init__(self, parentEntity, sgFieldSchemaInfo):
-    super(SgFieldType, self).__init__(None, None, sgFieldSchemaInfo)
+  def __init__(self, sgFieldSchemaInfo, sgEntity):
+    super(SgFieldType, self).__init__(None, None, sgFieldSchemaInfo, sgEntity)
 
-    self._SgField__setParentEntity(parentEntity)
+    super(SgFieldType, self).setValid(True)
 
-    self._SgField__valid = True
-
-  def invalidate(self):
+  def invalidate(self, force=False):
     '''
     Always returns False for Type fields.
     '''

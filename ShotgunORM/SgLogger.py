@@ -26,9 +26,11 @@
 
 __all__ = [
   'SgLogger',
+  'LoggerAsyncSearchEngine',
   'LoggerCallback',
   'LoggerConnection',
   'LoggerEntity',
+  'LoggerEventWatcher',
   'LoggerField',
   'LoggerFactory',
   'LoggerORM',
@@ -41,9 +43,11 @@ __all__ = [
 import logging
 import os
 
+LoggerAsyncSearchEngine = None
 LoggerCallback = None
 LoggerConnection = None
 LoggerEntity = None
+LoggerEventWatcher = None
 LoggerField = None
 LoggerFactory = None
 LoggerORM = None
@@ -60,10 +64,12 @@ class SgLogger(logging.Logger):
   the following format.
 
   Generic logger         debug: PY_SHOTGUNORM_SGGENERIC_DEBUG=1
+  SgAsyncSearchEngine    debug: PY_SHOTGUNORM_SGASYNCSEARCHENGINE_DEBUG=1
   SgCallbacks            debug: PY_SHOTGUNORM_SGCALLBACK_DEBUG=1
   SgConnection           debug: PY_SHOTGUNORM_SGCONNECTION_DEBUG=1
   SgEntity               debug: PY_SHOTGUNORM_SGENTITY_DEBUG=1
   SgEntityClassFactory   debug: PY_SHOTGUNORM_SGENTITYCLASSFACTORY_DEBUG=1
+  SgEventWatcher         debug: PY_SHOTGUNORM_SGEVENTWATCHER_DEBUG=1
   SgField                debug: PY_SHOTGUNORM_SGFIELD_DEBUG=1
   SgQueryEngine          debug: PY_SHOTGUNORM_SGQUERYENGINE_DEBUG=1
   SgSchema               debug: PY_SHOTGUNORM_SGSCHEMA_DEBUG=1
@@ -92,9 +98,11 @@ class SgLogger(logging.Logger):
 
     self.addHandler(self._logStreamHandler)
 
+LoggerAsyncSearchEngine = SgLogger('SgAsyncSearchEngine')
 LoggerCallback = SgLogger('SgCallback')
 LoggerConnection = SgLogger('SgConnection')
 LoggerEntity = SgLogger('SgEntity')
+LoggerEventWatcher = SgLogger('SgEventWatcher')
 LoggerField = SgLogger('SgField')
 LoggerFactory = SgLogger('SgEntityClassFactory')
 LoggerORM = SgLogger('SgGeneric')

@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 
+__all__ = [
+    'SgLazyResultSet',
+]
 
 class SgLazyResultSet(object):
 

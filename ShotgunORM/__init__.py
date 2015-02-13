@@ -24,27 +24,33 @@
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 __all__ = [
-    '__version__',
-    'MAJOR_VERSION',
-    'MINOR_VERSION',
-    'RELEASE_VERSION',
-    'VERSION',
-    'SHOTGUN_API',
-    'SHOTGUN_API_LOCK',
-    'SgConnection',
-    'SgEntity',
-    'SgEntityClassFactory',
-    'SgEntitySchemaInfo',
-    'SgField',
-    'SgFieldSchemaInfo',
-    'SgQueryEngine',
-    'SgLazyResultSet',
-    'SgSchema',
-    'SgScriptField',
-    'SgUserField',
-    'parseFromLogicalOp',
-    'parseToLogicalOp',
-    'config'
+  '__version__',
+  'MAJOR_VERSION',
+  'MINOR_VERSION',
+  'RELEASE_VERSION',
+  'VERSION',
+  'SHOTGUN_API',
+  'SHOTGUN_API_LOCK',
+  'SgAbstractSearchIterator',
+  'SgApiInfo',
+  'SgAsyncSearchEngine',
+  'SgAsyncSearchResult',
+  'SgBufferedSearchIterator',
+  'SgLazyResultSet',
+  'SgConnection',
+  'SgConnectionMeta',
+  'SgEntity',
+  'SgEntityClassFactory',
+  'SgEntitySchemaInfo',
+  'SgField',
+  'SgFieldSchemaInfo',
+  'SgQueryEngine',
+  'SgSchema',
+  'SgScriptField',
+  'SgSearchIterator',
+  'parseFromLogicalOp',
+  'parseToLogicalOp',
+  'config'
 ]
 
 MAJOR_VERSION = 1
@@ -52,9 +58,9 @@ MINOR_VERSION = 0
 RELEASE_VERSION = 1
 
 VERSION = '%(major)d.%(minor)dv%(release)d' % {
-    'major': MAJOR_VERSION,
-    'minor': MINOR_VERSION,
-    'release': RELEASE_VERSION
+  'major': MAJOR_VERSION,
+  'minor': MINOR_VERSION,
+  'release': RELEASE_VERSION
 }
 
 __version__ = VERSION
@@ -99,10 +105,13 @@ from utils import *
 #
 ################################################################################
 
-from SgConnection import SgConnection
+from SgApiInfo import SgApiInfo
+from SgConnection import SgConnection, SgConnectionMeta
 from SgEntityClassFactory import SgEntityClassFactory
+from SgAsyncSearchEngine import SgAsyncSearchEngine, SgAsyncSearchResult
 from SgQueryEngine import SgQueryEngine
 from SgSchema import SgSchema
+from SgSearchIterator import SgAbstractSearchIterator, SgBufferedSearchIterator, SgSearchIterator
 
 ################################################################################
 #
@@ -145,6 +154,28 @@ del SgScriptEngine
 
 ################################################################################
 #
+# Import event monitor
+#
+################################################################################
+
+import SgEventWatcher
+
+__all__.extend(SgEventWatcher.__all__)
+
+del SgEventWatcher
+
+from SgEventWatcher import *
+
+import SgEventWatchers
+
+__all__.extend(SgEventWatchers.__all__)
+
+del SgEventWatchers
+
+from SgEventWatchers import *
+
+################################################################################
+#
 # Import callbacks
 #
 ################################################################################
@@ -166,18 +197,24 @@ from callbacks import *
 import config
 
 try:
-    SHOTGUN_API = __import__(config.SHOTGUNAPI_NAME)
+  SHOTGUN_API = __import__(config.SHOTGUNAPI_NAME)
 except Exception, e:
-    if e.message == 'No module named %s' % config.SHOTGUNAPI_NAME:
-        raise ImportError('ShotgunORM unable to find Shotgun Python API module "%s", check "./ShotgunORM/__init__.SHOTGUNAPI_NAME" or sys.path' % config.SHOTGUNAPI_NAME)
-    else:
-        raise e
+  if e.message == 'No module named %s' % config.SHOTGUNAPI_NAME:
+    raise ImportError('ShotgunORM unable to find Shotgun Python API module "%s", check "./ShotgunORM/__init__.SHOTGUNAPI_NAME" or sys.path' % config.SHOTGUNAPI_NAME)
+  else:
+    raise e
 
 
 ################################################################################
 #
-# Import SgLazyResultSet
+# Import callbacks
 #
 ################################################################################
+
+import SgLazyResultSet
+
+__all__.extend(SgLazyResultSet.__all__)
+
+del SgLazyResultSet
 
 from SgLazyResultSet import *

@@ -9,8 +9,6 @@ setup(
     name='ShotgunORM',
     packages=find_packages(),
     include_package_data=True,
-    install_requires=[
-        'shotgun_api3',
-    ],
+    install_requires=[],
     license="BSD 3-Clause",
 )

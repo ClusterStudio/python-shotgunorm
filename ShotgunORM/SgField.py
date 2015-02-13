@@ -35,7 +35,7 @@ import copy
 import string
 import threading
 import weakref
-
+from pprint import pprint
 from xml.etree import ElementTree as ET
 
 # This module imports
@@ -108,6 +108,7 @@ class SgFieldSchemaInfo(object):
 
     self._commitable = sgFieldAttribs['commitable']
     self._defaultValue = sgFieldAttribs['default_value']
+    self._displayValues = sgFieldAttribs['display_values']
     self._doc = sgFieldAttribs['doc']
     self._editable = sgFieldAttribs['editable']
     self._label = sgFieldAttribs['label']
@@ -134,6 +135,7 @@ class SgFieldSchemaInfo(object):
     required=False,
     returnTypeName=None,
     summaryInfo=None,
+    displayValues=None,
     validTypes=None,
     validValues=None
   ):
@@ -164,9 +166,22 @@ class SgFieldSchemaInfo(object):
     if doc == None:
       doc = ''
 
+    if displayValues == None:
+      displayValues = {}
+
+    if summaryInfo == None:
+      summaryInfo = {}
+
+    if validTypes == None:
+      validTypes = []
+
+    if validValues == None:
+      validValues = []
+
     return {
       'commitable': True,
       'default_value': defaultValue,
+      'display_values': displayValues,
       'doc': doc,
       'editable': bool(editable),
       'label': label,
@@ -177,8 +192,8 @@ class SgFieldSchemaInfo(object):
       'return_type': returnType,
       'return_type_name': returnTypeName,
       'summary_info': summaryInfo,
-      'value_types': None,
-      'valid_values': None
+      'value_types': validTypes,
+      'valid_values': validValues
     }
 
   @classmethod
@@ -186,26 +201,67 @@ class SgFieldSchemaInfo(object):
     '''
     Returns a new SgFieldSchemaInfo that is constructed from the arg "sgSchema".
     '''
+    #print(sgSchema)
+    try:
+      default_value = sgSchema['properties']['default_value']['value']
+    except KeyError:
+      default_value = None
+
+    try:
+      label = sgSchema['name']['value']
+    except KeyError:
+      label = None
+
+    try:
+      parent = sgSchema['entity_type']['value']
+    except KeyError:
+      parent = None
+
+    try:
+      editable = sgSchema['editable']['value']
+    except KeyError:
+      editable = None
+    except TypeError:
+      editable = False
+
+    try:
+      required = sgSchema['mandatory']['value']
+    except KeyError:
+      required = None
+
+    try:
+      return_type_name = sgSchema['data_type']['value']
+    except KeyError:
+      return_type_name = None
+      #assert False, (sgFieldName, sgSchema)
 
     data = {
       'commitable': True,
-      'default_value': sgSchema['properties']['default_value']['value'],
+      'display_values': {},
+      'default_value': default_value,
       'doc': '',
-      'editable': sgSchema['editable']['value'],
-      'label': sgSchema['name']['value'],
+      'editable': editable,
+      'label': label,
       'name': sgFieldName,
-      'parent': sgSchema['entity_type']['value'],
+      'parent': parent,
       'queryable': True,
-      'required': sgSchema['mandatory']['value'],
+      'required': required,
       'return_type': FIELD_RETURN_TYPES.get(
-        sgSchema['data_type']['value'],
+        return_type_name,
         SgField.RETURN_TYPE_UNSUPPORTED
       ),
-      'return_type_name': sgSchema['data_type']['value'],
-      'summary_info': None,
-      'value_types': None,
+      'return_type_name': return_type_name,
+      'summary_info': {},
+      'value_types': [],
       'valid_values': []
     }
+
+    try:
+      data['display_values'] = copy.deepcopy(
+        sgSchema['properties']['display_values']['value']
+      )
+    except:
+      pass
 
     try:
       data['value_types'] = copy.deepcopy(
@@ -248,6 +304,7 @@ class SgFieldSchemaInfo(object):
     data = {
       'commitable': True,
       'default_value': sgXmlElement.attrib.get('default_value'),
+      'display_values': eval(sgXmlElement.attrib.get('display_values', '{}')),
       'doc': sgXmlElement.attrib.get('doc'),
       'editable': sgXmlElement.attrib.get('editable') == 'True',
       'label': sgXmlElement.attrib.get('label'),
@@ -257,19 +314,15 @@ class SgFieldSchemaInfo(object):
       'required': bool(sgXmlElement.attrib.get('required')),
       'return_type': int(sgXmlElement.attrib.get('return_type')),
       'return_type_name': sgXmlElement.attrib.get('return_type_name'),
-      'summary_info': eval(sgXmlElement.attrib.get('summary_info')),
-      'value_types': sgXmlElement.attrib.get('value_types'),
-      'valid_values': sgXmlElement.attrib.get('valid_values'),
+      'summary_info': eval(sgXmlElement.attrib.get('summary_info', '{}')),
+      'value_types': sgXmlElement.attrib.get('value_types', []),
+      'valid_values': sgXmlElement.attrib.get('valid_values', [])
     }
 
-    if data['value_types'] == '':
-      data['value_types'] = []
-    else:
+    if data['value_types'] != []:
       data['value_types'] = data['value_types'].split(',')
 
-    if data['valid_values'] == '':
-      data['valid_values'] = []
-    else:
+    if data['valid_values'] != []:
       data['valid_values'] = data['valid_values'].split(',')
 
     return cls(data)
@@ -280,6 +333,14 @@ class SgFieldSchemaInfo(object):
     '''
 
     return self._defaultValue
+
+  def displayValues(self):
+    '''
+    Returns a dictionary containing the display names for a selection list
+    field.
+    '''
+
+    return dict(self._displayValues)
 
   def doc(self):
     '''
@@ -314,6 +375,13 @@ class SgFieldSchemaInfo(object):
     '''
 
     return self._editable
+
+  def isUserField(self):
+    '''
+    Returns True if the field is a custom user field.
+    '''
+
+    return False
 
   def isRequired(self):
     '''
@@ -373,41 +441,37 @@ class SgFieldSchemaInfo(object):
     SgSchema.export(...)
     '''
 
-    doc = self.doc()
-    editable = str(self.isEditable())
-    label = self.label()
-    name = self.name()
-    parent = self.parentEntity()
-    required = str(self.isRequired())
-    return_type = str(self.returnType())
-    return_type_name = self.returnTypeName()
-    summary_info = str(self.summaryInfo())
-    value_types = self.valueTypes()
-    valid_values = self.validValues()
+    data = {
+      'doc': self.doc(),
+      'editable': str(self.isEditable()),
+      'label': self.label(),
+      'name': self.name(),
+      'parent': self.parentEntity(),
+      'required': str(self.isRequired()),
+      'return_type': str(self.returnType()),
+      'return_type_name': self.returnTypeName(),
+    }
 
-    if value_types == None:
-      value_types = ''
-    else:
-      value_types = ','.join(value_types)
+    displayValues = self.displayValues()
+    summaryInfo = self.summaryInfo()
+    validValues = self.validValues()
+    valueTypes = self.valueTypes()
 
-    if valid_values == None:
-      valid_values = ''
-    else:
-      valid_values = ','.join(valid_values)
+    if len(displayValues) > 0:
+      data['display_values'] = str(self.displayValues())
+
+    if len(summaryInfo) > 0:
+      data['summary_info'] = str(summaryInfo)
+
+    if len(validValues) > 0:
+      data['valid_values'] = ','.join(validValues)
+
+    if len(valueTypes) > 0:
+      data['value_types'] = ','.join(valueTypes)
 
     result = ET.Element(
       'SgField',
-      doc=doc,
-      editable=editable,
-      label=label,
-      name=name,
-      parent=parent,
-      required=required,
-      return_type=return_type,
-      return_type_name=return_type_name,
-      summary_info=summary_info,
-      value_types=value_types,
-      valid_values=valid_values
+      **data
     )
 
     return result
@@ -420,12 +484,7 @@ class SgFieldSchemaInfo(object):
     values.
     '''
 
-    result = []
-
-    for i in self._validValues:
-      result.append(i)
-
-    return result
+    return list(self._validValues)
 
   def valueTypes(self):
     '''
@@ -454,6 +513,7 @@ class SgFieldSchemaInfo2(SgFieldSchemaInfo):
     required=False,
     returnTypeName=None,
     summaryInfo=None,
+    displayValues=None,
     validTypes=None,
     validValues=None
   ):
@@ -468,6 +528,7 @@ class SgFieldSchemaInfo2(SgFieldSchemaInfo):
       required,
       returnTypeName,
       summaryInfo,
+      displayValues,
       validTypes,
       validValues
     )
@@ -476,6 +537,13 @@ class SgFieldSchemaInfo2(SgFieldSchemaInfo):
     result['queryable'] = False
 
     return result
+
+  def isUserField(self):
+    '''
+    Returns True if the field is a custom user field.
+    '''
+
+    return True
 
   def setDoc(self, doc):
     '''
@@ -548,7 +616,8 @@ class SgField(object):
   RETURN_TYPE_SUMMARY = 13
   RETURN_TYPE_TAG_LIST = 14
   RETURN_TYPE_TEXT = 15
-  RETURN_TYPE_URL = 16
+  RETURN_TYPE_TIMECODE = 16
+  RETURN_TYPE_URL = 17
 
   # Custom return types should start at 201.
   RETURN_TYPE_RESERVED = 200
@@ -580,7 +649,7 @@ class SgField(object):
 
     return False
 
-  def __init__(self, name, label=None, sgFieldSchemaInfo=None):
+  def __init__(self, name, label=None, sgFieldSchemaInfo=None, sgEntity=None):
     self.__parent = None
     self.__info = None
 
@@ -611,6 +680,11 @@ class SgField(object):
       )
     else:
       self.__setFieldSchemaInfo(sgFieldSchemaInfo)
+
+    if sgEntity != None:
+      self.__parent = weakref.ref(sgEntity)
+
+    self.parentChanged()
 
   @classmethod
   def registerFieldClass(cls, sgFieldReturnType, sgFieldClass):
@@ -691,11 +765,11 @@ class SgField(object):
     Returns the default value for the field.
     '''
 
-    return self.schemaInfo().defaultValue()
+    return self.__info.defaultValue()
 
   def _deleteWidget(self):
     '''
-    Sub-class portion of SgField.deleteWidget().
+    Subclass portion of SgField.deleteWidget().
 
     Note:
       This is only called by deleteWidget() if widget() is not None.
@@ -723,7 +797,7 @@ class SgField(object):
     Returns the fields doc string.
     '''
 
-    return self.schemaInfo().doc()
+    return self.__info.doc()
 
   def eventLogs(self, sgEventType=None, sgFields=None, sgRecordLimit=0):
     '''
@@ -747,7 +821,7 @@ class SgField(object):
 
     # If the parent is none or if the parent does not exist, meaning you can't
     # do any queries for event info, bail.
-    if parent == None or not parent.exists():
+    if not self.isQueryable() or parent == None or not parent.exists():
       return []
 
     connection = parent.connection()
@@ -793,10 +867,10 @@ class SgField(object):
 
   def _fromFieldData(self, sgData):
     '''
-    Sub-class portion of SgField.fromFieldData().
+    Subclass portion of SgField.fromFieldData().
 
     Note:
-      Sub-classes only need to convert the incoming data to their internal
+      Subclasses only need to convert the incoming data to their internal
       format and return True.
 
       You should check if the incoming value is the same as the current value
@@ -829,7 +903,7 @@ class SgField(object):
       parent = self.parentEntity()
 
       if not self.isEditable():
-        raise RuntimeError('%s is not editable!' % ShotgunORM.mkEntityFieldString(self))
+        raise RuntimeError('%s is not editable!' % self)
 
       if not ShotgunORM.config.DISABLE_FIELD_VALIDATE_ON_SET_VALUE:
         self.validate(forReal=True)
@@ -876,7 +950,7 @@ class SgField(object):
 
   def _invalidate(self):
     '''
-    Sub-class portion of SgField.invalidate().
+    Subclass portion of SgField.invalidate().
     '''
 
     pass
@@ -892,7 +966,7 @@ class SgField(object):
     '''
 
     with self:
-      if not self.isValid() and not force:
+      if not self.isValid() and not self.hasSyncUpdate() and not force:
         return False
 
       ShotgunORM.LoggerField.debug('%(sgField)s.invalidate(force=%(force)s)', {
@@ -941,7 +1015,7 @@ class SgField(object):
     Returns True if the field is allowed to make commits to Shotgun.
     '''
 
-    return self.schemaInfo().isQueryable()
+    return self.__info.isQueryable()
 
   def isCustom(self):
     '''
@@ -961,16 +1035,16 @@ class SgField(object):
     parent = self.parentEntity()
 
     if parent == None:
-      return self.schemaInfo().isEditable()
+      return self.__info.isEditable()
     else:
-      return self.schemaInfo().isEditable() or not parent.exists()
+      return self.__info.isEditable() or not parent.exists()
 
   def isQueryable(self):
     '''
     Returns True if the field is queryable in Shotgun.
     '''
 
-    return self.schemaInfo().isQueryable()
+    return self.__info.isQueryable()
 
   def isSyncUpdating(self):
     '''
@@ -986,7 +1060,7 @@ class SgField(object):
     Returns True if the field is a SgUserField.
     '''
 
-    return isinstance(self.__info, SgFieldSchemaInfo2)
+    return self.__info.isUserField()
 
   def isValid(self):
     '''
@@ -1003,7 +1077,7 @@ class SgField(object):
     Returns the user visible string of the field.
     '''
 
-    return self.schemaInfo().label()
+    return self.__info.label()
 
   def lastEventLog(self, sgEventType=None, sgFields=None):
     '''
@@ -1086,7 +1160,7 @@ class SgField(object):
 
   def _makeWidget(self):
     '''
-    Sub-class portion of SgField.makeWidget().
+    Subclass portion of SgField.makeWidget().
     '''
 
     return False
@@ -1109,11 +1183,11 @@ class SgField(object):
     Returns the Shotgun API string used to reference the field on an Entity.
     '''
 
-    return self.schemaInfo().name()
+    return self.__info.name()
 
   def parentChanged(self):
     '''
-
+    Called when the fields parent Entity changes.
     '''
 
     pass
@@ -1210,7 +1284,7 @@ class SgField(object):
 
   def _setValue(self, sgData):
     '''
-    Sub-class portion of SgField.setValue().
+    Subclass portion of SgField.setValue().
 
     Default function returns False.
 
@@ -1220,7 +1294,7 @@ class SgField(object):
       assumes this is the location of its value and other functions interact
       with it.
 
-      Sub-classes only need to convert the incoming data to their internal
+      Subclasses only need to convert the incoming data to their internal
       format and return True.
 
       You should check if the incoming value is the same as the current value
@@ -1251,7 +1325,7 @@ class SgField(object):
       ShotgunORM.LoggerField.debug('    * sgData: %(sgData)s', {'sgData': sgData})
 
       if not self.isEditable():
-        raise RuntimeError('%s is not editable!' % ShotgunORM.mkEntityFieldString(self))
+        raise RuntimeError('%s is not editable!' % self)
 
       if not ShotgunORM.config.DISABLE_FIELD_VALIDATE_ON_SET_VALUE:
         self.validate(forReal=True)
@@ -1309,7 +1383,7 @@ class SgField(object):
 
   def _toFieldData(self):
     '''
-    Sub-class portion of SgField.toFieldData().
+    Subclass portion of SgField.toFieldData().
     '''
 
     return self._value
@@ -1344,7 +1418,7 @@ class SgField(object):
 
   def _validate(self, forReal=False):
     '''
-    Sub-class portion of SgField.validate().
+    Subclass portion of SgField.validate().
 
     The return value of _validate() is what isValid() will be set to.  Return
     True if the field was properly validated and its value is True otherwise
@@ -1445,7 +1519,7 @@ class SgField(object):
 
   def _Value(self):
     '''
-    Sub-class portion of SgField.value().
+    Subclass portion of SgField.value().
 
     This allows sub-classes to return a copy of their value so modifications
     can't be done to the internal value.
@@ -1475,9 +1549,9 @@ class SgField(object):
 
   def _valueSg(self):
     '''
-    Sub-class portion of SgField.valueSg().
+    Subclass portion of SgField.valueSg().
 
-    Sub-classes can override this function to define how to retrieve their value
+    Subclasses can override this function to define how to retrieve their value
     from Shotgun.
 
     Default function calls valueSg() on the parent Entity.
@@ -1511,18 +1585,18 @@ class SgField(object):
     Returns a list of valid values supported by the field.
     '''
 
-    return self.schemaInfo().validValues()
+    return self.__info.validValues()
 
   def valueTypes(self):
     '''
     Returns a list of valid value types supported by the field.
     '''
 
-    return self.schemaInfo().valueTypes()
+    return self.__info.valueTypes()
 
   def widget(self):
     '''
-    Sub-classes can implement makeWidget so this returns some type of GUI widget
+    Subclasses can implement makeWidget so this returns some type of GUI widget
     for the field.
 
     Default returns None.
@@ -1554,6 +1628,7 @@ FIELD_RETURN_TYPES = {
   'summary': SgField.RETURN_TYPE_SUMMARY,
   'tag_list': SgField.RETURN_TYPE_TAG_LIST,
   'text': SgField.RETURN_TYPE_TEXT,
+  'timecode': SgField.RETURN_TYPE_TIMECODE,
   'url': SgField.RETURN_TYPE_URL,
   'url_template': SgField.RETURN_TYPE_TEXT,
   'uuid': SgField.RETURN_TYPE_TEXT
@@ -1577,5 +1652,6 @@ FIELD_RETURN_TYPE_NAMES = {
   SgField.RETURN_TYPE_SUMMARY: 'summary',
   SgField.RETURN_TYPE_TAG_LIST: 'tag_list',
   SgField.RETURN_TYPE_TEXT: 'text',
+  SgField.RETURN_TYPE_TIMECODE: 'timecode',
   SgField.RETURN_TYPE_URL: 'url'
 }

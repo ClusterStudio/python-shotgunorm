@@ -73,6 +73,8 @@ class SgEntitySchemaInfo(object):
     for fieldName, schemaData in sgFieldSchemas.items():
       if fieldName.startswith('step_'):
         continue
+      if fieldName == 'visible':
+        continue
 
       fieldInfo = ShotgunORM.SgFieldSchemaInfo.fromSg(sgEntityName, sgEntityLabel, fieldName, schemaData)
 
@@ -108,6 +110,7 @@ class SgEntitySchemaInfo(object):
       raise RuntimeError('invalid tag "%s"' % sgXmlElement.tag)
 
     entityFieldInfos = {}
+    entityFieldInfosUnsupported = {}
 
     fields = sgXmlElement.find('fields')
 
@@ -124,11 +127,17 @@ class SgEntitySchemaInfo(object):
       if fieldInfo.returnType() == ShotgunORM.SgField.RETURN_TYPE_UNSUPPORTED:
         ShotgunORM.LoggerEntity.warning('field %s.%s ignored because of return type unsupported' % (fieldInfo.name(), entityName))
 
-        continue
+        entityFieldInfosUnsupported[fieldInfo.name()] = fieldInfo
+      else:
+        entityFieldInfos[fieldInfo.name()] = fieldInfo
 
-      entityFieldInfos[field.attrib.get('name')] = fieldInfo
-
-    result = cls(sgSchema, entityName, entityLabel, entityFieldInfos)
+    result = cls(
+      sgSchema,
+      entityName,
+      entityLabel,
+      entityFieldInfos,
+      entityFieldInfosUnsupported
+    )
 
     try:
       ShotgunORM.onEntitySchemaInfoCreate(result)
@@ -389,7 +398,12 @@ class SgEntity(object):
     return False
 
   def __del__(self):
-    self.connection()._cacheEntity(self)
+    self.connection().cacheEntity(self)
+
+  def __dir__(self):
+    return sorted(
+      dir(type(self)) + self.__dict__.keys() + self.fieldNames()
+    )
 
   def __int__(self):
     return self.id
@@ -401,13 +415,12 @@ class SgEntity(object):
     self.__lock = threading.RLock()
     self.__connection = sgConnection
 
-    self._fields = {}
-
-    self._markedForDeletion = False
     self.__isCommitting = False
-
     self.__hasBuiltFields = False
+    self.__caching = -1
 
+    self._fields = {}
+    self._markedForDeletion = False
     self._widget = None
 
   def _fromFieldData(self, sgData):
@@ -448,12 +461,12 @@ class SgEntity(object):
       for field, value in sgData.items():
         fieldObj = self.field(field)
 
-        # Skip expression summary fields.
         if fieldObj == None:
-          ShotgunORM.LoggerEntity.warn('no field named "%s"' % field)
+          ShotgunORM.LoggerEntity.warn('%s no field named "%s"' % (self, field))
 
           continue
 
+        # Skip expression summary fields.
         if fieldObj.returnType() == ShotgunORM.SgField.RETURN_TYPE_SUMMARY:
           continue
 
@@ -496,9 +509,9 @@ class SgEntity(object):
 
       self._fields[fieldName] = sgField
 
-  def _afterCommit(self, sgBatchData, sgBatchResult, sgCommitData, sgCommitError):
+  def _afterCommit(self, sgBatchData, sgBatchResult, sgCommitData, dryRun, sgCommitError):
     '''
-    Sub-class portion of SgEntity.afterCommit().
+    Subclass portion of SgEntity.afterCommit().
 
     When sgCommitError is not None perform any cleanup but do not raise the
     exception object as that will happen later by the ShotgunORM.
@@ -525,7 +538,7 @@ class SgEntity(object):
 
     pass
 
-  def afterCommit(self, sgBatchData, sgBatchResult, sgCommitData, sgCommitError=None):
+  def afterCommit(self, sgBatchData, sgBatchResult, sgCommitData, sgDryRun, sgCommitError=None):
     '''
     Called in the moments immediately after the call to Shotgun has returned.
 
@@ -545,6 +558,10 @@ class SgEntity(object):
         Dictionary used to pass user data between beforeCommit() and
         afterCommit().
 
+      * (bool) sgDryRun:
+        When True the commit is not updating Shotgun with any modifications,
+        it is only in a test phase.
+
       * (Exception) sgCommitError:
         The Exception object if the commit raised an error.
     '''
@@ -553,6 +570,7 @@ class SgEntity(object):
     ShotgunORM.LoggerEntity.debug('    * sgBatchData: %(value)s', {'value': sgBatchData})
     ShotgunORM.LoggerEntity.debug('    * sgBatchResult: %(value)s', {'value': sgBatchResult})
     ShotgunORM.LoggerEntity.debug('    * sgCommitData: %(value)s', {'value': sgCommitData})
+    ShotgunORM.LoggerEntity.debug('    * sgDryRun: %(value)s', {'value': sgDryRun})
     ShotgunORM.LoggerEntity.debug('    * sgCommitError: %(value)s', {'value': sgCommitError})
 
     self.__isCommitting = False
@@ -571,7 +589,8 @@ class SgEntity(object):
           for field in self.fields(fieldNames).values():
             field.setIsCommitting(False)
 
-            field.setHasCommit(False)
+            if not sgDryRun:
+              field.setHasCommit(False)
 
         if commitType == 'create':
           self.field('id')._value = result['id']
@@ -590,14 +609,14 @@ class SgEntity(object):
     error = None
 
     try:
-      self._afterCommit(sgBatchData, sgBatchResult, sgCommitData, sgCommitError)
+      self._afterCommit(sgBatchData, sgBatchResult, sgCommitData, sgDryRun, sgCommitError)
     except Exception, e:
       error = e
 
     batchDataCopy = copy.deepcopy(sgBatchData)
 
     try:
-      ShotgunORM.afterEntityCommit(self, batchDataCopy, sgBatchResult, sgCommitData, sgCommitError)
+      ShotgunORM.afterEntityCommit(self, batchDataCopy, sgBatchResult, sgCommitData, sgDryRun, sgCommitError)
     except Exception, e:
       if error == None:
         error = e
@@ -605,7 +624,7 @@ class SgEntity(object):
     if error != None:
       raise error
 
-  def _beforeCommit(self, sgBatchData, sgCommitData):
+  def _beforeCommit(self, sgBatchData, sgCommitData, sgDryRun):
     '''
     Subclass portion of SgEntity.beforeCommit().
 
@@ -618,11 +637,15 @@ class SgEntity(object):
       * (dict) sgCommitData:
         Dictionary used to pass data user between beforeCommit() and
         afterCommit().
+
+      * (bool) sgDryRun:
+        When True the commit is not updating Shotgun with any modifications,
+        it is only in a test phase.
     '''
 
     pass
 
-  def beforeCommit(self, sgBatchData, sgCommitData):
+  def beforeCommit(self, sgBatchData, sgCommitData, sgDryRun):
     '''
     This function is called in the moments before the call to Shotgun.
 
@@ -637,11 +660,16 @@ class SgEntity(object):
       * (dict) sgCommitData:
         Dictionary used to pass data user between beforeCommit() and
         afterCommit().
+
+      * (bool) sgDryRun:
+        When True the commit is not updating Shotgun with any modifications,
+        it is only in a test phase.
     '''
 
     ShotgunORM.LoggerEntity.debug('%(entity)s.beforeCommit()', {'entity': self})
     ShotgunORM.LoggerEntity.debug('    * sgBatchData: %(value)s', {'value': sgBatchData})
     ShotgunORM.LoggerEntity.debug('    * sgCommitData: %(value)s', {'value': sgCommitData})
+    ShotgunORM.LoggerEntity.debug('    * sgDryRun: %(value)s', {'value': sgDryRun})
 
     self.__isCommitting = True
 
@@ -665,14 +693,14 @@ class SgEntity(object):
     error = None
 
     try:
-      self._beforeCommit(sgBatchData, sgCommitData)
+      self._beforeCommit(sgBatchData, sgCommitData, sgDryRun)
     except Exception, e:
       error = e
 
     batchDataCopy = copy.deepcopy(sgBatchData)
 
     try:
-      ShotgunORM.beforeEntityCommit(self, batchDataCopy, sgCommitData)
+      ShotgunORM.beforeEntityCommit(self, batchDataCopy, sgCommitData, sgDryRun)
     except Exception, e:
       if error == None:
         error = e
@@ -682,7 +710,7 @@ class SgEntity(object):
 
   def _buildFields(self):
     '''
-    Sub-class portion of SgEntity.buildFields().
+    Subclass portion of SgEntity.buildFields().
     '''
 
     pass
@@ -691,7 +719,7 @@ class SgEntity(object):
     '''
     Creates all the fields for the Entity.
 
-    After _buildFields(...) has been called buildUserFiels() is called.
+    After _buildFields(...) has been called buildUserFields() is called.
 
     Note:
       This is called by the class factory after the Entity has been created and
@@ -704,14 +732,15 @@ class SgEntity(object):
 
     entityFieldInfos = self.schemaInfo().fieldInfos()
 
-    # Add the type field.
-    self._fields['type'] = ShotgunORM.SgFieldType(self, entityFieldInfos['type'])
-    self._fields['id'] = ShotgunORM.SgFieldID(self, entityFieldInfos['id'])
+    self._fields['id'] = ShotgunORM.SgFieldID(
+      entityFieldInfos.pop('id'),
+      self
+    )
 
-    # Dont pass the "id" field as its manually built as a user field.  Same
-    # for the type field.
-    del entityFieldInfos['id']
-    del entityFieldInfos['type']
+    self._fields['type'] = ShotgunORM.SgFieldType(
+      entityFieldInfos.pop('type'),
+      self
+    )
 
     fieldClasses = ShotgunORM.SgField.__fieldclasses__
 
@@ -720,9 +749,7 @@ class SgEntity(object):
 
       fieldClass = fieldClasses.get(fieldInfo.returnType(), None)
 
-      newField = fieldClass(None, sgFieldSchemaInfo=fieldInfo)
-
-      newField._SgField__setParentEntity(self)
+      newField = fieldClass(None, sgFieldSchemaInfo=fieldInfo, sgEntity=self)
 
       if hasattr(self.__class__, fieldName):
         ShotgunORM.LoggerField.warn(
@@ -737,6 +764,18 @@ class SgEntity(object):
     self._buildFields()
 
     self.__hasBuiltFields = True
+
+  def caching(self):
+    '''
+    Returns the caching state of the Entity.
+
+    Values:
+      -1: Caching is determined by the connections caching state (default)
+      0: Disabled
+      1: Enabled
+    '''
+
+    return self.__caching
 
   def clone(self, inheritFields=[], numberOfEntities=1):
     '''
@@ -789,7 +828,7 @@ class SgEntity(object):
         numberOfEntities=numberOfEntities
       )
 
-  def commit(self, sgFields=None):
+  def commit(self, sgFields=None, sgDryRun=False):
     '''
     Commits any modified Entity fields that have not yet been published to the
     Shotgun database.
@@ -800,6 +839,10 @@ class SgEntity(object):
       * (dict) sgFields:
         List of fields to commit.  When specified only those fields will be
         commited.
+
+      * (bool) sgDryRun:
+        When True no field updates will be pushed to Shotgun.  Only the before
+        and after commit calls will process.
     '''
 
     with self:
@@ -819,7 +862,8 @@ class SgEntity(object):
             'entity': self,
             'batch_data': batchData
           }
-        ]
+        ],
+        sgDryRun
       )
 
       return True
@@ -831,7 +875,7 @@ class SgEntity(object):
 
     return self.__connection
 
-  def delete(self, sgCommit=False):
+  def delete(self, sgCommit=False, sgDryRun=False):
     '''
     Deletes the Entity from Shotgun.
 
@@ -844,10 +888,36 @@ class SgEntity(object):
       if not self.exists():
         raise RuntimeError('entity does not exist, can not generate request data for type delete')
 
+      if sgCommit == False and sgDryRun == True:
+        raise RuntimeError('cant dry run when sgCommit is False')
+
       if sgCommit:
-        self.connection().delete(self)
+        self.connection().delete(self, sgDryRun)
       else:
         self._markedForDeletion = True
+
+  def disableCaching(self):
+    '''
+    Disables the caching of this Entity and only this Entity.
+
+    To disable all caching for a Shotgun connection call the connections
+    disableCaching() function.
+    '''
+
+    if self.isCaching():
+      self.connection().clearCacheForEntity(self)
+
+    self.__caching = 0
+
+  def enableCaching(self):
+    '''
+    Enables the caching of this Entity and only this Entity.
+
+    To enable all caching for a Shotgun connection call the connections
+    enableCaching() function.
+    '''
+
+    self.__caching = 1
 
   def eventLogs(self, sgEventType=None, sgFields=None, sgRecordLimit=0):
     '''
@@ -1161,6 +1231,61 @@ class SgEntity(object):
 
       return result
 
+  def follow(self, sgUser):
+    '''
+    Configure the Shotgun HumanUser to follow this Entity.
+
+    Returns True if successful.
+
+    Args:
+      * (SgEntity) sgUser:
+        User which will follow the Entity.
+    '''
+
+    if (
+      not self.exists() or
+      not isinstance(sgUser, SgEntity) or
+      sgUser['type'] != 'HumanUser' or
+      not sgUser.exists()
+    ):
+      return False
+
+    return self.connection().connection().follow(
+      sgUser.toEntityFieldData(),
+      self.toEntityFieldData()
+    )['followed']
+
+  def followers(self):
+    '''
+    Returns a list of user Entities that are following this Entity.
+    '''
+
+    if not self.exists():
+      return []
+
+    connection = self.connection()
+
+    search = connection.connection().followers(self.toEntityFieldData())
+
+    result = []
+
+    if len(search) == 0:
+      return result
+
+    for i in search:
+      result.append(
+        connection._createEntity(
+          i['type'],
+          {
+            'id': i['id'],
+            'type': i['type']
+          }
+
+        )
+      )
+
+    return result
+
   def hasField(self, sgField):
     '''
     Returns True if the Entity contains the field specified.
@@ -1197,6 +1322,20 @@ class SgEntity(object):
     '''
 
     return not self.__hasBuiltFields
+
+  def isCaching(self):
+    '''
+    Returns True if the Entity will save its field values in the connections
+    cache.
+
+    Default returns the connections isCaching() state unless the Entity has
+    has caching disabled by calling SgEntity.disableCaching().
+    '''
+
+    if self.__caching < 0:
+      return self.connection().isCaching()
+    else:
+      return bool(self.__caching)
 
   def isCommitting(self):
     '''
@@ -1266,6 +1405,36 @@ class SgEntity(object):
 
       return self._makeWidget()
 
+  def removeField(self, fieldName):
+    '''
+    Removes the specified use field from the Entity'
+    '''
+
+    with self:
+      if not self.hasField(fieldName):
+        raise RuntimeError('invalid field name "%s"' % fieldName)
+
+      if not self.field(fieldName).isUserField():
+        raise RuntimeError('unable to delete a non-user field')
+
+      del self._fields[fieldName]
+
+      # Because the field can still exist in another scope unset its parent!
+      self.field(fieldName)._SgField__setParentEntity(None)
+
+  def resetCaching(self):
+    '''
+    Resets the Entities caching state to that of the connections.
+    '''
+
+    with self:
+      if self.__caching == -1:
+        return
+
+      self.__caching = -1
+
+      self.connection().clearCacheForEntity(self)
+
   def revert(self, sgFields=None, ignoreValid=False, ignoreWithUpdate=False):
     '''
     Reverts all fields to their Shotgun db value.
@@ -1289,20 +1458,15 @@ class SgEntity(object):
       result = False
 
       for field in self.fields(sgFields).values():
-        if not field.isValid():
-          continue
-
         if (field.isValid() and ignoreValid) or (field.hasCommit() and ignoreWithUpdate):
           continue
 
-        if not field.invalidate():
-          continue
-
-        result = True
+        if field.invalidate():
+          result = True
 
       return result
 
-  def revive(self):
+  def revive(self, sgDryRun=False):
     '''
     Revives the Entity.
     '''
@@ -1311,24 +1475,7 @@ class SgEntity(object):
       if not self.exists():
         raise RuntimeError('entity does not exist, can not generate request data for type revive')
 
-      self.connection().revive(self)
-
-  def removeField(self, fieldName):
-    '''
-    Removes the specified use field from the Entity'
-    '''
-
-    with self:
-      if not self.hasField(fieldName):
-        raise RuntimeError('invalid field name "%s"' % fieldName)
-
-      if self.field(fieldName).isUserField():
-        raise RuntimeError('unable to delete a non-user field')
-
-      del self._fields[fieldName]
-
-      # Because the field can still exist in another scope unset its parent!
-      self.field(fieldName)._SgField__setParentEntity(None)
+      self.connection().revive(self, sgDryRun)
 
   def schemaInfo(self):
     '''
@@ -1542,6 +1689,30 @@ class SgEntity(object):
         result[fieldName] = field.toFieldData()
 
     return result
+
+  def unfollow(self, sgUser):
+    '''
+    Configure the HumanUser to stop following this Entity.
+
+    Returns True if successful.
+
+    Args:
+      * (SgEntity) sgUser:
+        User that will will stop following the Entity.
+    '''
+
+    if (
+      not self.exists() or
+      not isinstance(sgUser, SgEntity) or
+      sgUser['type'] != 'HumanUser' or
+      not sgUser.exists()
+    ):
+      return False
+
+    return self.connection().connection().unfollow(
+      sgUser.toEntityFieldData(),
+      self.toEntityFieldData()
+    )['unfollowed']
 
   def valuesSg(self, sgFields=None, sgReturnTypes=None):
     '''

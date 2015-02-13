@@ -118,6 +118,7 @@ def _entityFix(schema, schemaData):
   schemaData['Banner'] = BannerEntity
 
 SCHEMA_CACHE_DIR = os.path.dirname(__file__).replace('\\', '/') + '/config/schema_caches'
+SCHEMA_CACHE_DIR_ENV_VAR = 'PY_SHOTGUNORM_CACHE_DIR'
 
 class SgSchema(object):
   '''
@@ -156,6 +157,7 @@ class SgSchema(object):
     self.__valid = False
     self.__buildId = 0
     self.__isBuilding = False
+    self.__builtFromCache = False
 
   @classmethod
   def createSchema(cls, url):
@@ -175,9 +177,7 @@ class SgSchema(object):
 
       result = cls(url)
 
-      urlLower = result.url().lower()
-
-      cls.__cache__[urlLower] = result
+      cls.__cache__[result.url().lower()] = result
 
       return result
 
@@ -190,12 +190,7 @@ class SgSchema(object):
     '''
 
     with cls.__lock__:
-      urlLower = url.lower()
-
-      try:
-        return cls.__cache__[urlLower]
-      except KeyError:
-        return None
+      return cls.__cache__.get(url.lower(), None)
 
   @classmethod
   def registerDefaultQueryFields(cls, sgEntityType, sgQueryTemplates, sgFields):
@@ -328,6 +323,14 @@ class SgSchema(object):
       loadedCache = False
 
       schemaCachePath = SCHEMA_CACHE_DIR
+      schemaCachePathEnv = os.getenv(SCHEMA_CACHE_DIR_ENV_VAR, None)
+
+      if schemaCachePathEnv != None:
+        try:
+          if os.path.exists(schemaCachePathEnv):
+            schemaCachePath = schemaCachePathEnv
+        except:
+          pass
 
       newSchema = {}
 
@@ -355,6 +358,8 @@ class SgSchema(object):
 
       if loadedCache == False:
         newSchema = self._fromSG(sgConnection)
+      else:
+        self.__builtFromCache = True
 
       _entityFix(self, newSchema)
 
@@ -402,7 +407,7 @@ class SgSchema(object):
 
   def _changed(self):
     '''
-    Sub-class portion of changed().
+    Subclass portion of changed().
 
     Default does nothing.
     '''
@@ -501,6 +506,11 @@ class SgSchema(object):
     '''
 
     with self:
+      if self.__builtFromCache:
+        ShotgunORM.LoggerSchema.warn(
+          'exporting schema when current schema was built from a cache file'
+        )
+
       if not self.isInitialized():
         self.__buildEvent.wait(self.BUILD_EVENT_TIMEOUT)
 
@@ -521,13 +531,13 @@ class SgSchema(object):
     not initialized.
     '''
 
+    event.set()
+
     with self:
       if self.isInitialized():
         return
 
-      event.set()
-
-      self._build(sgConnection)
+      self.build(sgConnection)
 
   def initialize(self, sgConnection, thread=True):
     '''
@@ -567,6 +577,19 @@ class SgSchema(object):
     '''
 
     return self.__valid
+
+  def isValidEntityType(self, sgEntityType):
+    '''
+    Returns True if the Entity type is a valid Entity name.
+    '''
+
+    if not self.isInitialized():
+      self.__buildEvent.wait(self.BUILD_EVENT_TIMEOUT)
+
+      if not self.isInitialized():
+        raise RuntimeError('schema has not been initialized')
+
+    return self._schema.get(sgEntityType, None) != None
 
   def toXML(self):
     '''
